@@ -1,0 +1,25 @@
+[package]
+name = "vk-api"
+description = "VentoKnowledge HTTP API：axum 路由、中间件、SSE"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+vk-core = { path = "../vk-core" }
+vk-store = { path = "../vk-store" }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+jsonwebtoken = "9"
+argon2 = { workspace = true }
+futures-util = { workspace = true }
+sqlx = { workspace = true }
+bytes = { workspace = true }

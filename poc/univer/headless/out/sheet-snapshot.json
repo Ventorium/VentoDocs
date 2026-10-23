@@ -1,0 +1,456 @@
+{
+ "id": "poc-workbook",
+ "sheetOrder": [
+  "sheet-s-1f585f3a5507",
+  "sheet-s-e18846d7837c"
+ ],
+ "name": "sample.xlsx",
+ "appVersion": "1.0.4",
+ "locale": "zhCN",
+ "styles": {
+  "IO6sw7": {
+   "bl": 1
+  },
+  "VmDEux": {
+   "bl": 1,
+   "bg": {
+    "rgb": "#FFF2CC"
+   }
+  }
+ },
+ "sheets": {
+  "sheet-s-1f585f3a5507": {
+   "id": "sheet-s-1f585f3a5507",
+   "name": "销售",
+   "tabColor": "#000000",
+   "hidden": 0,
+   "rowCount": 21,
+   "columnCount": 10,
+   "defaultColumnWidth": 88,
+   "defaultRowHeight": 24,
+   "zoomRatio": 100,
+   "scrollTop": 0,
+   "scrollLeft": 0,
+   "rowHeader": {
+    "width": 46
+   },
+   "columnHeader": {
+    "height": 24
+   },
+   "showGridlines": 1,
+   "rightToLeft": 0,
+   "mergeData": [
+    {
+     "startRow": 3,
+     "endRow": 3,
+     "startColumn": 3,
+     "endColumn": 6
+    },
+    {
+     "startRow": 13,
+     "endRow": 13,
+     "startColumn": 0,
+     "endColumn": 1,
+     "rangeType": 0
+    }
+   ],
+   "cellData": {
+    "0": {
+     "0": {
+      "v": 10,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "1": {
+      "v": 32,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "1": {
+     "0": {
+      "f": "A1+B1",
+      "v": 42,
+      "t": 2,
+      "s": {
+       "b": 1
+      }
+     }
+    },
+    "3": {
+     "3": {
+      "v": "一季度销售",
+      "t": 1,
+      "s": {
+       "b": 1,
+       "sz": 14,
+       "ht": 2
+      }
+     }
+    },
+    "4": {
+     "3": {
+      "v": "产品",
+      "t": 1,
+      "s": {
+       "b": 1,
+       "bg": {
+        "rgb": "#2F6FE0"
+       },
+       "ht": 2
+      }
+     },
+     "4": {
+      "v": "数量",
+      "t": 1,
+      "s": {
+       "b": 1,
+       "bg": {
+        "rgb": "#2F6FE0"
+       },
+       "ht": 2
+      }
+     },
+     "5": {
+      "v": "单价",
+      "t": 1,
+      "s": {
+       "b": 1,
+       "bg": {
+        "rgb": "#2F6FE0"
+       },
+       "ht": 2
+      }
+     },
+     "6": {
+      "v": "小计",
+      "t": 1,
+      "s": {
+       "b": 1,
+       "bg": {
+        "rgb": "#2F6FE0"
+       },
+       "ht": 2
+      }
+     }
+    },
+    "5": {
+     "3": {
+      "v": "甲",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "4": {
+      "v": 120,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "5": {
+      "v": 3.5,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "6": {
+      "f": "E6*F6",
+      "v": 420,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "6": {
+     "3": {
+      "v": "乙",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "4": {
+      "v": 45,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "5": {
+      "v": 12,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "6": {
+      "f": "E7*F7",
+      "v": 540,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "7": {
+     "3": {
+      "v": "丙",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "4": {
+      "v": 8,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "5": {
+      "v": 99,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "6": {
+      "f": "E8*F8",
+      "v": 792,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "8": {
+     "3": {
+      "v": "丁",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "4": {
+      "v": 60,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "5": {
+      "v": 7.5,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "6": {
+      "f": "E9*F9",
+      "v": 450,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "9": {
+     "3": {
+      "v": "戊",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "4": {
+      "v": 200,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "5": {
+      "v": 1.2,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     },
+     "6": {
+      "f": "E10*F10",
+      "v": 240,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "10": {
+     "0": {
+      "v": "POC 追加行",
+      "t": 1,
+      "s": "VmDEux"
+     },
+     "1": {
+      "f": "SUM(G6:G10)"
+     }
+    },
+    "14": {
+     "0": {
+      "v": "undo-redo-test",
+      "t": 1
+     }
+    }
+   },
+   "rowData": {},
+   "columnData": {},
+   "freeze": {
+    "xSplit": 0,
+    "ySplit": 0,
+    "startRow": -1,
+    "startColumn": -1
+   }
+  },
+  "sheet-s-e18846d7837c": {
+   "id": "sheet-s-e18846d7837c",
+   "name": "备注",
+   "tabColor": "#000000",
+   "hidden": 0,
+   "rowCount": 20,
+   "columnCount": 10,
+   "defaultColumnWidth": 88,
+   "defaultRowHeight": 24,
+   "zoomRatio": 100,
+   "scrollTop": 0,
+   "scrollLeft": 0,
+   "rowHeader": {
+    "width": 46
+   },
+   "columnHeader": {
+    "height": 24
+   },
+   "showGridlines": 1,
+   "rightToLeft": 0,
+   "mergeData": [
+    {
+     "startRow": 0,
+     "startColumn": 0,
+     "endRow": 0,
+     "endColumn": 2
+    }
+   ],
+   "cellData": {
+    "0": {
+     "0": {
+      "v": "说明",
+      "t": 1,
+      "s": {
+       "b": 1
+      }
+     }
+    },
+    "1": {
+     "0": {
+      "v": "总合计",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "1": {
+      "f": "销售!A2+销售!G6+销售!G7",
+      "v": 1002,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "2": {
+     "0": {
+      "v": "公式引用销售!A2",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     },
+     "1": {
+      "f": "销售!A2*2",
+      "v": 84,
+      "t": 2,
+      "s": {
+       "sz": 11
+      }
+     }
+    },
+    "3": {
+     "0": {
+      "v": "备注文本单元格",
+      "t": 1,
+      "s": {
+       "sz": 11
+      }
+     }
+    }
+   },
+   "rowData": {},
+   "columnData": {},
+   "freeze": {
+    "xSplit": 0,
+    "ySplit": 0,
+    "startRow": -1,
+    "startColumn": -1
+   }
+  }
+ },
+ "resources": [
+  {
+   "name": "SHEET_RANGE_PROTECTION_PLUGIN",
+   "data": ""
+  },
+  {
+   "name": "SHEET_AuthzIoMockService_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_WORKSHEET_PROTECTION_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_WORKSHEET_PROTECTION_POINT_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_DRAWING_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_UNIVER_THREAD_COMMENT_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_DEFINED_NAME_PLUGIN",
+   "data": ""
+  },
+  {
+   "name": "SHEET_RANGE_THEME_MODEL_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_DATA_VALIDATION_PLUGIN",
+   "data": "{}"
+  },
+  {
+   "name": "SHEET_FILTER_PLUGIN",
+   "data": "{}"
+  }
+ ]
+}

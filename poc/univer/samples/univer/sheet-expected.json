@@ -1,0 +1,171 @@
+{
+ "sheets": {
+  "销售": {
+   "sheetId": "sheet-s-1f585f3a5507",
+   "cells": {
+    "A1": {
+     "value": 10,
+     "formula": null
+    },
+    "B1": {
+     "value": 32,
+     "formula": null
+    },
+    "A2": {
+     "value": 42,
+     "formula": "A1+B1"
+    },
+    "D4": {
+     "value": "一季度销售",
+     "formula": null
+    },
+    "D5": {
+     "value": "产品",
+     "formula": null
+    },
+    "E5": {
+     "value": "数量",
+     "formula": null
+    },
+    "F5": {
+     "value": "单价",
+     "formula": null
+    },
+    "G5": {
+     "value": "小计",
+     "formula": null
+    },
+    "D6": {
+     "value": "甲",
+     "formula": null
+    },
+    "E6": {
+     "value": 120,
+     "formula": null
+    },
+    "F6": {
+     "value": 3.5,
+     "formula": null
+    },
+    "G6": {
+     "value": 420,
+     "formula": "E6*F6"
+    },
+    "D7": {
+     "value": "乙",
+     "formula": null
+    },
+    "E7": {
+     "value": 45,
+     "formula": null
+    },
+    "F7": {
+     "value": 12,
+     "formula": null
+    },
+    "G7": {
+     "value": 540,
+     "formula": "E7*F7"
+    },
+    "D8": {
+     "value": "丙",
+     "formula": null
+    },
+    "E8": {
+     "value": 8,
+     "formula": null
+    },
+    "F8": {
+     "value": 99,
+     "formula": null
+    },
+    "G8": {
+     "value": 792,
+     "formula": "E8*F8"
+    },
+    "D9": {
+     "value": "丁",
+     "formula": null
+    },
+    "E9": {
+     "value": 60,
+     "formula": null
+    },
+    "F9": {
+     "value": 7.5,
+     "formula": null
+    },
+    "G9": {
+     "value": 450,
+     "formula": "E9*F9"
+    },
+    "D10": {
+     "value": "戊",
+     "formula": null
+    },
+    "E10": {
+     "value": 200,
+     "formula": null
+    },
+    "F10": {
+     "value": 1.2,
+     "formula": null
+    },
+    "G10": {
+     "value": 240,
+     "formula": "E10*F10"
+    }
+   },
+   "merged": [
+    "D4:G4"
+   ],
+   "conditionalFormatting": [
+    {
+     "range": "E6:E10",
+     "type": "cellIs",
+     "operator": "greaterThan",
+     "formula": [
+      "100"
+     ]
+    }
+   ],
+   "images": 1,
+   "charts": 1
+  },
+  "备注": {
+   "sheetId": "sheet-s-e18846d7837c",
+   "cells": {
+    "A1": {
+     "value": "说明",
+     "formula": null
+    },
+    "A2": {
+     "value": "总合计",
+     "formula": null
+    },
+    "B2": {
+     "value": 1002,
+     "formula": "销售!A2+销售!G6+销售!G7"
+    },
+    "A3": {
+     "value": "公式引用销售!A2",
+     "formula": null
+    },
+    "B3": {
+     "value": 84,
+     "formula": "销售!A2*2"
+    },
+    "A4": {
+     "value": "备注文本单元格",
+     "formula": null
+    }
+   },
+   "merged": [
+    "A1:C1"
+   ],
+   "conditionalFormatting": [],
+   "images": 0,
+   "charts": 0
+  }
+ }
+}

@@ -1,0 +1,24 @@
+{
+  "rows": 20001,
+  "cols": 10,
+  "loadMs": 122.72,
+  "editMs": 8.18,
+  "saveMs": 156.06,
+  "totalMs": 286.96,
+  "memory": {
+    "before": {
+      "rssMB": 150,
+      "heapMB": 61.88
+    },
+    "afterEdit": {
+      "rssMB": 161.79,
+      "heapMB": 71.72
+    },
+    "afterSave": {
+      "rssMB": 186.02,
+      "heapMB": 92.46
+    }
+  },
+  "snapshotBytes": 4831494,
+  "snapshotMB": 4.61
+}

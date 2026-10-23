@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Univer OSS POC — 生命周期验证</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #f5f6f8; }
+      #bar { padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd; display: flex; gap: 10px; align-items: center; }
+      #bar button { padding: 6px 14px; cursor: pointer; }
+      #status { font-size: 13px; color: #333; white-space: pre-wrap; max-width: 700px; }
+      #editor { width: 100%; height: calc(100vh - 110px); }
+      #log { height: 90px; overflow: auto; background: #111; color: #9f9; font: 12px monospace; padding: 6px 10px; white-space: pre-wrap; }
+    </style>
+    <script type="module" crossorigin src="/assets/index-8tDqLqsi.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DI0jtSnq.css">
+  </head>
+  <body>
+    <div id="bar">
+      <button id="init">初始化（加载 sample.xlsx 数据模型）</button>
+      <button id="edit">程序化编辑演示</button>
+      <button id="destroy">销毁</button>
+      <span id="status">尚未初始化</span>
+    </div>
+    <div id="editor"></div>
+    <div id="log"></div>
+    <div id="react-root"></div>
+  </body>
+</html>

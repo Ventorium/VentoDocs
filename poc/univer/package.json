@@ -1,0 +1,32 @@
+{
+  "name": "univer-poc",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "POC-1: Univer OSS 对 XLSX/DOCX/PPTX 在线编辑能力的验证工程（浏览器端）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "gen:samples": "python3 samples/gen_samples.py",
+    "gen:bridge": "python3 samples/office_to_univer.py",
+    "verify:sheets": "cd headless && node verify-sheets.mjs",
+    "verify:docs": "cd headless && node verify-docs.mjs",
+    "perf:large": "cd headless && node perf-large.mjs",
+    "audit:licenses": "bash scripts/audit-licenses.sh"
+  },
+  "dependencies": {
+    "@univerjs/presets": "1.1.0",
+    "@univerjs/preset-docs-core": "1.1.0",
+    "@univerjs/preset-sheets-conditional-formatting": "1.1.0",
+    "@univerjs/preset-sheets-core": "1.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.7"
+  }
+}

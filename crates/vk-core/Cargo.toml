@@ -1,0 +1,15 @@
+[package]
+name = "vk-core"
+description = "VentoKnowledge 领域核心：实体、权限引擎、ID 生成、错误类型（零 I/O）"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+bitflags = { version = "2", features = ["serde"] }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

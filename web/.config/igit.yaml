@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://igit.erguotou.me/schema/0.0.2/schema.json
+staged_hooks:
+  enabled: true
+  rules:
+    '**/*.{js,jsx,ts,tsx}': biome check --write
+    # '**/*.{css,scss,less,styl,stylus}': stylelint --fix
+commit_msg:
+  enabled: true
+  prependEmoji: true
+ai:
+  enabled: false
+  baseUrl: https://api.deepseek.com
+  # apiKey:
+  model: deepseek-chat

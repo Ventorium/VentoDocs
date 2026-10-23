@@ -1,0 +1,23 @@
+[package]
+name = "vk-app"
+description = "VentoKnowledge 可执行入口"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "vento"
+path = "src/main.rs"
+
+[dependencies]
+vk-core = { path = "../vk-core" }
+vk-store = { path = "../vk-store" }
+vk-api = { path = "../vk-api" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+include_dir = "0.7"

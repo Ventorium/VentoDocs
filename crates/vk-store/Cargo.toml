@@ -1,0 +1,29 @@
+[package]
+name = "vk-store"
+description = "VentoKnowledge 数据访问层：sqlx + PostgreSQL + 本地对象存储"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+vk-core = { path = "../vk-core" }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+argon2 = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+futures-util = { workspace = true }
+sha2 = "0.10"
+walkdir = "2"
+zip = "2"
+tar = "0.4"
+flate2 = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

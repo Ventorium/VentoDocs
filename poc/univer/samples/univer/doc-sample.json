@@ -1,0 +1,297 @@
+{
+ "id": "poc-doc",
+ "title": "sample.docx",
+ "documentStyle": {
+  "defaultNumFormat": {},
+  "defaultPageSize": {
+   "width": 595,
+   "height": 842
+  },
+  "defaultParagraphStyle": {
+   "spacing": {
+    "before": 0,
+    "after": 120,
+    "line": 360,
+    "lineRule": 0
+   },
+   "horizontalAlign": 0,
+   "textStyle": {
+    "sz": 12,
+    "ff": "Calibri",
+    "cl": "#000000"
+   }
+  }
+ },
+ "styles": {
+  "h1": {
+   "name": "Heading 1",
+   "type": 1,
+   "paragraphStyle": {
+    "headingId": "h1",
+    "namedStyleType": 1
+   },
+   "textStyle": {
+    "bl": 1,
+    "sz": 22
+   }
+  },
+  "h2": {
+   "name": "Heading 2",
+   "type": 1,
+   "paragraphStyle": {
+    "headingId": "h2",
+    "namedStyleType": 1
+   },
+   "textStyle": {
+    "bl": 1,
+    "sz": 20
+   }
+  },
+  "h3": {
+   "name": "Heading 3",
+   "type": 1,
+   "paragraphStyle": {
+    "headingId": "h3",
+    "namedStyleType": 1
+   },
+   "textStyle": {
+    "bl": 1,
+    "sz": 18
+   }
+  }
+ },
+ "lists": {
+  "list-1": {
+   "listType": "list-1",
+   "nestingLevel": [
+    {
+     "bulletAlignment": 0,
+     "glyphFormat": "●",
+     "glyphSource": "Symbol",
+     "glyphStyle": {
+      "bl": 0
+     }
+    }
+   ]
+  }
+ },
+ "body": {
+  "dataStream": "Univer POC 样例文档\r（目录将在打开文档时更新）\r第一章 概述\r这是第一级段落，用于验证普通正文样式。\r第一节 背景\r这是二级标题下的段落。\r1.1 小节\r这是三级标题下的段落，带一个脚注。\r编号列表条目一\r编号列表条目二\r项目符号条目\r这是一个带尾注的段落。\r第二章 表格\r下面是一个 3x3 表格：\r\u001a\u001b\u001c姓名\u001d\u001c数量\u001d\u001c单价\u001d\u001e\u001b\u001c甲\u001d\u001c120\u001d\u001c3.5\u001d\u001e\u001b\u001c乙\u001d\u001c45\u001d\u001c12.0\u001d\u001e\u001f第三章 图片\r下面是一张示例图片：\r\r图片之后的段落。\r\u0000",
+  "paragraphs": [
+   {
+    "startIndex": 15,
+    "paragraphId": "para-e730bf615867"
+   },
+   {
+    "startIndex": 29,
+    "paragraphId": "para-c705419a64f5"
+   },
+   {
+    "startIndex": 36,
+    "paragraphId": "para-5273893615e0",
+    "paragraphStyle": {
+     "headingId": "h1"
+    }
+   },
+   {
+    "startIndex": 56,
+    "paragraphId": "para-901c832d46c6"
+   },
+   {
+    "startIndex": 63,
+    "paragraphId": "para-dae4785aa660",
+    "paragraphStyle": {
+     "headingId": "h2"
+    }
+   },
+   {
+    "startIndex": 75,
+    "paragraphId": "para-00273dea35b4"
+   },
+   {
+    "startIndex": 82,
+    "paragraphId": "para-6e08b8c5a695",
+    "paragraphStyle": {
+     "headingId": "h3"
+    }
+   },
+   {
+    "startIndex": 100,
+    "paragraphId": "para-f44b7dcc647c"
+   },
+   {
+    "startIndex": 108,
+    "paragraphId": "para-f012152770e1",
+    "bullet": {
+     "listType": "list-1",
+     "listId": 1,
+     "nestingLevel": 0
+    }
+   },
+   {
+    "startIndex": 116,
+    "paragraphId": "para-6ec2a3ae4710",
+    "bullet": {
+     "listType": "list-1",
+     "listId": 1,
+     "nestingLevel": 0
+    }
+   },
+   {
+    "startIndex": 123,
+    "paragraphId": "para-68c3960c2e40",
+    "bullet": {
+     "listType": "list-1",
+     "listId": 1,
+     "nestingLevel": 0
+    }
+   },
+   {
+    "startIndex": 135,
+    "paragraphId": "para-52d354c7381e"
+   },
+   {
+    "startIndex": 142,
+    "paragraphId": "para-2443eb23c534",
+    "paragraphStyle": {
+     "headingId": "h1"
+    }
+   },
+   {
+    "startIndex": 202,
+    "paragraphId": "para-e6503803920b"
+   },
+   {
+    "startIndex": 209,
+    "paragraphId": "para-223efd90bf5e",
+    "paragraphStyle": {
+     "headingId": "h1"
+    }
+   },
+   {
+    "startIndex": 220,
+    "paragraphId": "para-f2a0f28abbd4"
+   },
+   {
+    "startIndex": 221,
+    "paragraphId": "para-57c90cbe2c7c"
+   },
+   {
+    "startIndex": 230,
+    "paragraphId": "para-ad76b8dd7cda"
+   }
+  ],
+  "tables": [
+   {
+    "startIndex": 157,
+    "endIndex": 203,
+    "tableId": "tbl-01"
+   }
+  ]
+ },
+ "tableSource": {
+  "tbl-01": {
+   "tableId": "tbl-01",
+   "tableRows": [
+    {
+     "tableCells": [
+      {},
+      {},
+      {}
+     ],
+     "trHeight": {
+      "val": {
+       "v": 32,
+       "u": 3
+      },
+      "hRule": 0
+     }
+    },
+    {
+     "tableCells": [
+      {},
+      {},
+      {}
+     ],
+     "trHeight": {
+      "val": {
+       "v": 32,
+       "u": 3
+      },
+      "hRule": 0
+     }
+    },
+    {
+     "tableCells": [
+      {},
+      {},
+      {}
+     ],
+     "trHeight": {
+      "val": {
+       "v": 32,
+       "u": 3
+      },
+      "hRule": 0
+     }
+    }
+   ],
+   "tableColumns": [
+    {
+     "size": {
+      "type": 1,
+      "width": {
+       "v": 96,
+       "u": 3
+      }
+     }
+    },
+    {
+     "size": {
+      "type": 1,
+      "width": {
+       "v": 96,
+       "u": 3
+      }
+     }
+    },
+    {
+     "size": {
+      "type": 1,
+      "width": {
+       "v": 96,
+       "u": 3
+      }
+     }
+    }
+   ],
+   "align": 0,
+   "indent": {
+    "v": 0,
+    "u": 3
+   },
+   "textWrap": 1,
+   "position": {
+    "positionH": {
+     "relativeFrom": 1
+    },
+    "positionV": {
+     "relativeFrom": 1
+    }
+   },
+   "dist": {
+    "distT": 0,
+    "distB": 0,
+    "distL": 0,
+    "distR": 0
+   },
+   "size": {
+    "type": 1,
+    "width": {
+     "v": 288,
+     "u": 3
+    }
+   }
+  }
+ }
+}

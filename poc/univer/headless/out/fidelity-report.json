@@ -1,0 +1,22 @@
+{
+ "sheet": {
+  "销售.cells": "无损",
+  "销售.merged": "无损",
+  "销售.conditionalFormatting": "结构性丢失",
+  "销售.images": "结构性丢失",
+  "销售.charts": "结构性丢失",
+  "备注.cells": "无损",
+  "备注.merged": "无损",
+  "_formula_note": "8 个公式单元格 f/v 均保留（无头不重算，v 为桥接预写缓存值）"
+ },
+ "doc": {
+  "paragraph.text": "无损",
+  "paragraph.heading": "无损",
+  "table": "无损",
+  "toc": "轻微丢失",
+  "footnotes/endnotes": "轻微丢失",
+  "images": "结构性丢失",
+  "_para_count": "18 段全部命中（标题 5/5）",
+  "_table_count": "1/1 张表格完整（哨兵+tableSource+单元格文本）"
+ }
+}

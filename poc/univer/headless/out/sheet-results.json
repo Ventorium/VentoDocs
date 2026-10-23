@@ -1,0 +1,112 @@
+{
+ "pass": 21,
+ "total": 21,
+ "ms": 88.48689,
+ "results": [
+  {
+   "name": "加载工作簿",
+   "ok": true,
+   "detail": "poc-workbook"
+  },
+  {
+   "name": "工作表数量",
+   "ok": true,
+   "detail": "实际 2"
+  },
+  {
+   "name": "按名取表(销售)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "按名取表(备注)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "A1 值=10",
+   "ok": true,
+   "detail": "10"
+  },
+  {
+   "name": "B1 值=32",
+   "ok": true,
+   "detail": "32"
+  },
+  {
+   "name": "A2 公式结果=42",
+   "ok": true,
+   "detail": "getValue=42"
+  },
+  {
+   "name": "G6 公式=E6*F6=420",
+   "ok": true,
+   "detail": "getValue=420"
+  },
+  {
+   "name": "跨表公式 备注!B2=1002",
+   "ok": true,
+   "detail": "getValue=1002"
+  },
+  {
+   "name": "合并区域 D4:G4",
+   "ok": true,
+   "detail": "[\"D4:G4\"]"
+  },
+  {
+   "name": "编辑后 A11 可读",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "编辑后合并 A13:B13",
+   "ok": true,
+   "detail": "[\"D4:G4\",\"A13:B13\"]"
+  },
+  {
+   "name": "插入行后 G10 缓存值不变=240",
+   "ok": true,
+   "detail": "= 240"
+  },
+  {
+   "name": "插入行后合并区推移到 A14:B14",
+   "ok": true,
+   "detail": "[\"D4:G4\",\"A14:B14\"]"
+  },
+  {
+   "name": "undo 前 A15 已写入",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "undo 回退 A15",
+   "ok": true,
+   "detail": "=null"
+  },
+  {
+   "name": "redo 恢复 A15",
+   "ok": true,
+   "detail": "=undo-redo-test"
+  },
+  {
+   "name": "快照 sheets 数",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "快照含 A2 公式",
+   "ok": true,
+   "detail": "{\"f\":\"A1+B1\",\"v\":42,\"t\":2,\"s\":{\"b\":1}}"
+  },
+  {
+   "name": "快照含 B11 公式文本",
+   "ok": true,
+   "detail": "{\"f\":\"SUM(G6:G10)\"}"
+  },
+  {
+   "name": "disposeUnit 销毁",
+   "ok": true,
+   "detail": ""
+  }
+ ]
+}

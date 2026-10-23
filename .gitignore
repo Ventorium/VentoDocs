@@ -1,0 +1,17 @@
+# Rust
+target/
+Cargo.lock
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 运行时数据
+data/
+*.log
+.env
+
+# 编辑器/工具
+.DS_Store
+.idea/
+.vscode/
