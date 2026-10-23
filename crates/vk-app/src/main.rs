@@ -111,7 +111,6 @@ async fn main() -> anyhow::Result<()> {
 fn static_files() -> axum::Router {
     use axum::extract::{Path as UrlPath, State as UrlState};
     use axum::http::{StatusCode, header};
-    use axum::response::IntoResponse;
     use axum::routing::get;
 
     let index = WEB_DIST
@@ -131,12 +130,13 @@ fn static_files() -> axum::Router {
         index_response(&index)
     }
 
-    async fn asset_route(
-        UrlState(_index): UrlState<Vec<u8>>,
+    /// 已知静态文件按内嵌路径服务（注意 `{*path}` 不含 `/assets/` 前缀）；未命中则回退 SPA。
+    async fn static_or_index(
+        UrlState(index): UrlState<Vec<u8>>,
         UrlPath(path): UrlPath<String>,
     ) -> axum::response::Response {
         let Some(file) = WEB_DIST.get_file(path.as_str()) else {
-            return StatusCode::NOT_FOUND.into_response();
+            return index_response(&index);
         };
         axum::response::Response::builder()
             .status(StatusCode::OK)
@@ -145,13 +145,8 @@ fn static_files() -> axum::Router {
             .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
     }
 
-    async fn spa_fallback(UrlState(index): UrlState<Vec<u8>>) -> axum::response::Response {
-        index_response(&index)
-    }
-
     axum::Router::new()
         .route("/", get(index_route))
-        .route("/assets/{*path}", get(asset_route))
-        .route("/{*path}", get(spa_fallback))
+        .route("/{*path}", get(static_or_index))
         .with_state(index)
 }

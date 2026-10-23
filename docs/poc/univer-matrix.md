@@ -172,7 +172,77 @@ Office 文件的进出必须解决 Pro 授权或自建桥接（本 POC 的 Pytho
 20k 行对服务端批处理与版本快照存储没有压力；快照 ~4.6MB/万行可作为版本存储的容量基线。
 浏览器端同数据规模未单独压测（初始化 + 双文档载入 ~57MB JS 内存，万行渲染属常规场景）。
 
-### 5.5 许可证审计（scripts/audit-licenses.sh，逐包扫描 node_modules/.pnpm）
+### 5.5 M2.1 补充：Univer 1.2.0 集成 API 实测与 Rust 原生转换契约
+
+M2.1（XLSX/DOCX 在线只读预览）将浏览器端从 POC 的 1.1.0 升级到 **1.2.0**（`@univerjs/presets` +
+`preset-sheets-core` + `preset-docs-core` 三件套，均在 web/ 工程安装），并把 Office→Univer 快照桥接
+从 POC 的 Python 脚本工程化为 **Rust 原生 crate `vk-convert`**（随 `vento` 单二进制分发）。
+以下 API 结论均逐文件核对过 1.2.0 `node_modules/.pnpm` 下的 `.d.ts` / `lib/es/index.js`（非文档推断）。
+
+**createUniver 入口**：
+
+1. `@univerjs/presets/lib/es/index.js` 只有 3 行 `export *`（`@univerjs/core`、`@univerjs/core/facade`、
+   `@univerjs/themes`）+ 自有的 `createUniver` 实现 → `import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'`
+   成立。`createUniver(options)` 解构 `{presets, plugins, collaboration, override=[], ...univerOptions}`，
+   插件按 `pluginName` 去重（重复注册抛错），返回 `{ univer, univerAPI: FUniver.newAPI(univer) }`。
+2. **preset 配置**（`preset-sheets-core/lib/es/index.js`）：`UniverSheetsCorePreset(config = {})`
+   解构 `{ container = "app", workerURL, header, footer, toolbar, ribbonType, formulaBar, menu,
+   contextMenu, disableAutoFocus, customFontFamily, docs, sheets, formula, ... }`。
+   **`workerURL` 可选**：不传 → 不注册 `UniverRPCMainThreadPlugin`，公式引擎跑**主线程**
+   （对只读预览无影响：Rust 转换快照已带缓存值 `v`，引擎仅兜底重算）；docs 相关插件随 sheets preset 内置。
+3. **container 类型**：preset config 本身没有 container 字段，它经 `IUniverUIConfig extends IWorkbenchOptions`
+   继承，`IWorkbenchOptions.container?: string | HTMLElement`（`@univerjs/ui`
+   `lib/types/controllers/ui/ui.controller.d.ts:19`）→ **可直接传 DOM 元素**，无需 id 字符串（M2.1 采用元素，避免多实例 id 冲突）。
+4. **创建 facade 是同步调用**（1.1.0 → 1.2.0 未变）：
+   `univerAPI.createWorkbook(data: Partial<IWorkbookData>, options?: ICreateUnitOptions): FWorkbook`
+   （sheets `lib/types/facade/f-univer.d.ts`:41/115，经 preset 重导出合并进 FUniver）；
+   `univerAPI.createDocument(data: Partial<IDocumentData>, options?: ICreateUnitOptions): FDocument`
+   （docs `lib/types/facade/f-univer.d.ts`:34/58）。
+5. **只读模式（重要变更点）**：1.2.0 数据模型与 config 中**没有** readonly 开关，只读只能走权限门面：
+   - sheets：`await fWorkbook.getWorkbookPermission().setMode('viewer')`，
+     `WorkbookMode = 'owner' | 'editor' | 'viewer' | 'commenter'`（permission-types.d.ts:148），`setMode(): Promise<void>`；
+   - docs：`await fDocument.getPermission().setReadOnly()`（f-document-permission.d.ts:125）。
+   两者均异步，失败仅记 console.warn（不阻断渲染）。
+6. **locales**：仍是 `createUniver` 顶层选项。子路径 `@univerjs/preset-sheets-core/locales/zh-CN`
+   （exports map `"./locales/*" → lib/es/locales/*.js`），locale 模块形态 `declare const _default: any; export default _default`。
+   单 preset 挂载时无需 `mergeLocales`。
+7. **包布局**：preset 三包均为 `lib/types/*.d.ts` + `lib/es/{index.js, locales/, worker.js}`（**无 `lib/esm/`**），
+   引用类型时勿用 `lib/esm` 路径。
+
+**Rust 转换器（vk-convert）→ Univer 快照契约（1.2.0 适配，测试锁定）**：
+
+- API：`convert(bytes, ext, file_name) -> Result<UniverSnapshot, ConvertError>`，
+  `UniverSnapshot { unit_type: "sheet"|"doc", snapshot: Value }`；支持 xlsx/xlsm/xls/csv/tsv/docx；`MAX_CELLS = 1_000_000`。
+- **列表嵌套结构（1.2.0 `INestingLevel` 实测契约）**：`IListData { listType, nestingLevel: INestingLevel[] }`，
+  `INestingLevel` 字段仅 `{ paragraphProperties?, bulletAlignment, glyphFormat, textStyle?, startNumber, glyphType?, glyphSymbol?, isLegal? }`，
+  **`glyphSource`/`glyphStyle` 在 1.2.0 已不存在**（POC 参考样本是 1.1.0 时代形态，diff 属预期）。
+  正确形态：
+  - 无序（符号列表）：`{bulletAlignment:0, glyphFormat:glyph, glyphSymbol:glyph, startNumber, textStyle:{bl:0}}`；
+  - 十进制有序：`{bulletAlignment:0, glyphFormat:"%1.", glyphType:2, startNumber}`；
+  - 其他有序：`glyphType` 取 `ListGlyphType` 对应值（BULLET=0, NONE=1, DECIMAL=2, …, CHINESE_COUNTING=14），`glyphFormat` 取 lvlText。
+  engine-render 渲染逻辑：`glyphSymbol` 非空 → `normalizeLegacySymbolFontGlyph(glyphSymbol, textStyle.ff)`；
+  否则按 `glyphFormat` 生成序号。
+- **PUA 字形不可直接下发**：legacy 映射表仅 wingdings 167→"▪"、216→"➢"，其余 PUA（如 Word 符号列表常用的
+  U+F0B7）会原样通过 → 渲染为不可见/方框。Rust 端 `normalize_glyph` 统一把 PUA 映射为 "●"。
+- **单元格删除线样式键 `"st":{s:1}`** 在 1.2.0 确认有效。
+- 数值输出规则：整数值的 f64 以 JSON 整数输出（`number_to_json`/`sz_value`），避免 `"1002.0"` 形态。
+- sheet 快照键控：`sheets` 以生成的 sheet id（FNV-1a）为键（BTreeMap 字典序），`sheetOrder` 数组才是权威顺序；
+  POC 参考样本用 sheet 名做键 → diff 属预期，非保真问题。
+
+**DOCX 转换器已接受偏差（vs POC 参考快照，均经 diff 确认为有意为之）**：
+段落 id 为零填充十进制（ref 为十六进制）；十进制有序列表按真实语义建模（ref 全按 bullet 输出属 POC 桥接局限）；
+列表结构按 1.2.0 `INestingLevel`（见上）；PUA 符号 → "●"；标题字号取文档解析值 14/13/18（H3 18 为
+`(24.0-2.0*lvl).max(14.0)` 回退值，ref 硬编码 22/20/18）；`defaultParagraphStyle` sz 取 docDefaults 解析值 11（ref 12）；
+页面尺寸按 sectPr 解析 Letter 612×792（ref 硬编码 A4）；文档 id 为 `vento-doc`。
+
+**服务端预览端点**：`GET /api/v1/files/{id}/univer-preview` → `{ unitType, snapshot, fileVersion }`；
+READ_PREVIEW 权限；不支持扩展名/解析失败 → 400 中文提示；>20MB → 413；对象缺失 → 404。
+E2E 20/20 全绿（xlsx：双表名/公式 `=A1+B1`/fileVersion；docx：title/lists；pptx 400；无权限 403；404）。
+
+复现：`cargo test -p vk-convert`（7 测试）；
+`cargo run -p vk-convert --example dump_snapshot -- <file> [ext]` 可 dump 任意文件的 Univer 快照 JSON。
+
+### 5.6 许可证审计（scripts/audit-licenses.sh，逐包扫描 node_modules/.pnpm）
 
 - 全部 `@univerjs*` 包均为 **Apache-2.0**；
 - **无任何 `@univerjs-pro` 包**；无空 license 包；
@@ -206,7 +276,7 @@ Office 文件的进出必须解决 Pro 授权或自建桥接（本 POC 的 Pytho
 |---|---|---|
 | 1 | Pro 环境实测 `sheets-exchange-client` 导入 XLSX 的快照形态（重点：`f` 是否带 `=`、图片/图表/CF 承载字段），与 §5.1 假设对照 | Pro 授权/试用 |
 | 2 | Pro `exchange-node` 服务端互转性能与内存（20k 行基线对照 §5.4） | Pro 授权/试用 |
-| 3 | PPTX 预览方案选型（若 Pro 未授权）：服务端渲染缩略图 vs 前端轻量渲染 | 商务决策 |
+| 3 | ~~PPTX 预览方案选型~~ **已决策（M2 用户确认）**：v1 不做 PPTX 预览，仅"下载 + 提示卡片"；若 Pro 授权含 slides 则在 v2 重评 | 已关闭 |
 | 4 | 浏览器端 20k 行渲染压测（无头链路已验证 <300ms，渲染层未压） | 可选 |
 | 5 | CF 桥接搬运（当前桥接不搬 CF 规则，浏览器端 CF 预设已验证可用，缺数据层） | 路线 B 工程化 |
 | 6 | 图片对象化存储方案（OSS 数据模型无二进制承载，需文件服务 + 资源引用改造） | 路线 B 工程化 |

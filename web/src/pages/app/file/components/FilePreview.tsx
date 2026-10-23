@@ -5,14 +5,34 @@ import type { FileMeta } from '@/api/schema'
 import { fetchFileContent } from '@/api'
 import FileIcon from '@/components/FileIcon'
 import { fileTypeInfo } from '@/lib/fileType'
+import UniverPreview from './UniverPreview'
 
 type FilePreviewProps = {
   file: FileMeta
   onDownload: () => void
 }
 
-/** 文件预览区：图片/PDF 走 Blob URL，文本直显；Office 与其他类型展示提示卡片 + 下载。 */
+/** 后端可转换为 Univer 快照的扩展名。 */
+const UNIVER_SHEET_EXT = new Set(['xlsx', 'xls', 'csv', 'tsv'])
+const UNIVER_DOC_EXT = new Set(['docx'])
+
+/** 文件预览区：Office 走 Univer 只读预览，图片/PDF 走 Blob URL，文本直显，其余展示提示卡片 + 下载。 */
 const FilePreview = ({ file, onDownload }: FilePreviewProps) => {
+  const ext = file.name.includes('.')
+    ? (file.name.split('.').pop() ?? '').toLowerCase()
+    : ''
+
+  if (UNIVER_SHEET_EXT.has(ext) || UNIVER_DOC_EXT.has(ext)) {
+    return (
+      <UniverPreview
+        key={file.id}
+        file={file}
+        unit={UNIVER_DOC_EXT.has(ext) ? 'doc' : 'sheet'}
+        onDownload={onDownload}
+      />
+    )
+  }
+
   const preview = fileTypeInfo(file.name).preview
   const [text, setText] = useState<string | null>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
@@ -102,14 +122,11 @@ const FilePreview = ({ file, onDownload }: FilePreviewProps) => {
     )
   }
 
-  const ext = file.name.includes('.')
-    ? (file.name.split('.').pop() ?? '').toLowerCase()
-    : ''
   const hint =
     ext === 'pptx' || ext === 'ppt'
-      ? 'PPTX 暂不支持在线编辑，请下载后查看'
+      ? 'PPT 暂不支持在线预览，请下载后查看'
       : preview === 'office'
-        ? '在线编辑即将上线，当前可下载查看'
+        ? '该文件类型暂不支持在线预览，请下载后查看'
         : '该文件类型暂不支持在线预览'
 
   return (

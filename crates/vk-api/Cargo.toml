@@ -7,6 +7,7 @@ version.workspace = true
 [dependencies]
 vk-core = { path = "../vk-core" }
 vk-store = { path = "../vk-store" }
+vk-convert = { path = "../vk-convert" }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }

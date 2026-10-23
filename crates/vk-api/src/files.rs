@@ -368,6 +368,64 @@ pub async fn content(
     Ok(response)
 }
 
+/// 在线预览转换大小上限（20MB，防超大文件转换打爆内存）。
+const MAX_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Univer 在线预览：服务端 Rust 转换 Office/CSV → Univer 快照 JSON（M2.1 只读）。
+/// 响应：`{unitType: "sheet"|"doc", snapshot, fileVersion}`。
+pub async fn univer_preview(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pool = state.db.pool();
+    require_file_perm(pool, &user, id, Perm::READ_PREVIEW).await?;
+    let file = Files::get_meta(pool, id).await?;
+    let sha = Files::current_sha(pool, id).await?;
+    let mut obj = state
+        .objects
+        .open(&sha)
+        .await
+        .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+    let len = obj
+        .metadata()
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件元数据失败：{e}")))?
+        .len();
+    if len > MAX_PREVIEW_BYTES {
+        return Err(ApiError::preview_too_large());
+    }
+    let mut buf = Vec::with_capacity(len as usize);
+    obj.read_to_end(&mut buf)
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件失败：{e}")))?;
+
+    let ext = std::path::Path::new(&file.name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !vk_convert::is_supported(&ext) {
+        return Err(ApiError::bad_request(
+            "该文件类型暂不支持在线预览，请下载后查看",
+        ));
+    }
+    let snap = vk_convert::convert(&buf, &ext, &file.name).map_err(|e| match e {
+        vk_convert::ConvertError::UnsupportedFormat => ApiError::bad_request(
+            "该文件类型暂不支持在线预览，请下载后查看",
+        ),
+        vk_convert::ConvertError::TooLarge => ApiError::preview_too_large(),
+        vk_convert::ConvertError::Parse(detail) => {
+            ApiError::bad_request(format!("文件解析失败：{detail}"))
+        }
+    })?;
+    Ok(Json(serde_json::json!({
+        "unitType": snap.unit_type,
+        "snapshot": snap.snapshot,
+        "fileVersion": file.current_version,
+    })))
+}
+
 /// 在线编辑保存：multipart（file + base_version + note?）→ 新版本。
 pub async fn save(
     State(state): State<AppState>,

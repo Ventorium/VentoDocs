@@ -82,6 +82,15 @@ impl ApiError {
         )
     }
 
+    /// 在线预览转换大小超限（20MB）。
+    pub fn preview_too_large() -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "PREVIEW_TOO_LARGE",
+            "文件过大，暂不支持在线预览，请下载后查看",
+        )
+    }
+
     pub fn publish_disabled() -> Self {
         Self::new(StatusCode::GONE, "PUBLISH_DISABLED", "发布站点已停用")
     }

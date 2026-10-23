@@ -5,6 +5,7 @@ members = [
     "crates/vk-store",
     "crates/vk-api",
     "crates/vk-app",
+    "crates/vk-convert",
 ]
 
 [workspace.package]
@@ -40,6 +41,12 @@ hex = "0.4"
 # 文件
 futures-util = "0.3"
 bytes = "1"
+# Office → Univer 快照转换（M2 在线预览/编辑）
+calamine = { version = "0.37", features = ["dates"] }
+quick-xml = { version = "0.42", features = ["encoding"] }
+zip = "2"
+encoding_rs = "0.8"
+docx-rs = "0.4.22"
 
 [profile.release]
 lto = true

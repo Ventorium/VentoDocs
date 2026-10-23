@@ -141,6 +141,13 @@ export type LoginResp = {
   user: User
 }
 
+/** Univer 在线预览：服务端 Rust 转换 Office/CSV → Univer 快照（M2.1 只读）。 */
+export type UniverPreviewResp = {
+  unitType: 'sheet' | 'doc'
+  snapshot: any
+  fileVersion: number
+}
+
 export type OkResp = {
   ok: boolean
 }
@@ -278,6 +285,7 @@ export type OpenAPIs = {
     '/api/v1/files/{id}/versions': { query: VersionsQuery; params: IdParams; body: any; headers: any; response: VersionInfo[] }
     // 二进制内容：客户端不解析非 JSON，实际经 raw fetch 下载，见 api/index.ts 的 fetchFileContent。
     '/api/v1/files/{id}/content': { query: any; params: IdParams; body: any; headers: any; response: Response }
+    '/api/v1/files/{id}/univer-preview': { query: any; params: IdParams; body: any; headers: any; response: UniverPreviewResp }
   }
   post: {
     '/api/v1/auth/bootstrap': { query: any; params: any; body: BootstrapReq; headers: any; response: LoginResp }
