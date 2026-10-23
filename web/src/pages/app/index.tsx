@@ -1,8 +1,7 @@
-const Page = () => {
+import { Navigate } from 'react-router'
 
-  return (
-    <div>Hello</div>
-  )
+const AppIndex = () => {
+  return <Navigate to="/app/files" replace />
 }
 
-export default Page
+export default AppIndex

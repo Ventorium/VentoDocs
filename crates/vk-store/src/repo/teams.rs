@@ -38,7 +38,7 @@ impl Teams {
         })
     }
 
-    const TEAM_SELECT: &'static str = "t.id, t.name, t.created_at, (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id)::int AS member_count";
+    const TEAM_SELECT: &'static str = "t.id, t.name, t.created_at, (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id) AS member_count";
 
     pub async fn list(pool: &PgPool) -> Result<Vec<Team>> {
         let rows: Vec<TeamRow> = sqlx::query_as(&format!(

@@ -76,19 +76,18 @@ impl Grants {
         if is_admin {
             return Ok(Perm::all());
         }
-        // 祖先链（含自身）：path 前缀匹配
+        // 祖先链（含自身）：祖先 D 满足 目标path LIKE D.path || '%'（id 基路径，无通配符字符）
         let rows = sqlx::query_as::<_, ChainRow>(
             "SELECT d.id, d.path, d.created_by,
                     COALESCE(SUM(CASE WHEN g.principal_type = 'user' AND g.principal_id = $1 THEN g.perms ELSE 0 END), 0) AS user_perms,
                     COALESCE(SUM(CASE WHEN g.principal_type = 'team' AND g.principal_id IN (SELECT team_id FROM team_members WHERE user_id = $1) THEN g.perms ELSE 0 END), 0) AS team_perms
              FROM directories d
              LEFT JOIN grants g ON g.directory_id = d.id
-             WHERE d.path LIKE $2 OR d.id = $3
+             WHERE $2 LIKE d.path || '%'
              GROUP BY d.id, d.path, d.created_by",
         )
         .bind(user_id)
-        .bind(self_path_prefix(pool, directory_id).await?)
-        .bind(directory_id)
+        .bind(self_path(pool, directory_id).await?)
         .fetch_all(pool)
         .await?;
 
@@ -128,20 +127,19 @@ impl Grants {
     }
 }
 
-async fn self_path_prefix(pool: &PgPool, directory_id: Uuid) -> Result<String> {
-    let path: String = sqlx::query_scalar("SELECT path FROM directories WHERE id = $1")
+async fn self_path(pool: &PgPool, directory_id: Uuid) -> Result<String> {
+    sqlx::query_scalar("SELECT path FROM directories WHERE id = $1")
         .bind(directory_id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| StoreError::NotFound(format!("目录 {directory_id}")))?;
-    Ok(format!("{path}%"))
+        .ok_or_else(|| StoreError::NotFound(format!("目录 {directory_id}")))
 }
 
 #[derive(sqlx::FromRow)]
 struct ChainRow {
     created_by: Option<Uuid>,
-    user_perms: i32,
-    team_perms: i32,
+    user_perms: i64,
+    team_perms: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

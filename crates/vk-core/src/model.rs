@@ -87,6 +87,15 @@ pub struct FileMeta {
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+/// 文件列表项：元数据 + 当前锁（未锁定为 None）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub file: FileMeta,
+    pub lock: Option<FileLock>,
 }
 
 /// 目录列表项：子目录或文件。
@@ -94,7 +103,7 @@ pub struct FileMeta {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum EntryKind {
     Directory(Directory),
-    File(FileMeta),
+    File(FileEntry),
 }
 
 /// 锁定状态快照。

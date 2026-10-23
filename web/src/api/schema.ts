@@ -61,6 +61,7 @@ export type FileMeta = {
   created_by: string | null
   created_at: string
   updated_at: string
+  deleted_at?: string | null
 }
 
 export type FileLock = {
@@ -83,10 +84,10 @@ export type DirectoryPage = {
   my_perms: number
 }
 
-/** 目录子项（serde tag = "kind"）。 */
+/** 目录子项（serde tag = "kind"）；文件项附带当前锁状态。 */
 export type Entry =
   | { kind: 'directory'; directory: Directory }
-  | { kind: 'file'; file: FileMeta }
+  | { kind: 'file'; file: FileMeta; lock: FileLock | null }
 
 export type GrantItem = {
   id: string
@@ -107,6 +108,20 @@ export type VersionInfo = {
   created_by: string
   created_at: string
   created_by_name: string
+}
+
+/** 审计日志条目（管理员列表接口返回）。 */
+export type AuditEntry = {
+  id: number
+  ts: string
+  actor_id: string | null
+  actor_name: string | null
+  category: string
+  action: string
+  resource_type: string | null
+  resource_id: string | null
+  detail: Record<string, unknown>
+  ip: string | null
 }
 
 export type LdapImportRow = {
@@ -186,7 +201,7 @@ export type RenameDirReq = {
 }
 
 export type MoveDirReq = {
-  parent_id: string
+  target_parent_id: string
 }
 
 export type SetGrantReq = {
@@ -215,9 +230,27 @@ export type RestoreRenameReq = {
   new_name: string
 }
 
+export type RenameFileReq = {
+  new_name: string
+}
+
 export type VersionsQuery = {
   limit?: number
   offset?: number
+}
+
+export type AuditListQuery = {
+  category?: string
+  action?: string
+  actor_id?: string
+  limit?: number
+  offset?: number
+}
+
+/** 团队详情（GET /teams/{team_id}?with_members=true）。 */
+export type TeamDetail = {
+  team: Team
+  members: User[]
 }
 
 // ---------------- 路由表 ----------------
@@ -234,7 +267,8 @@ export type OpenAPIs = {
     '/api/v1/users': { query: any; params: any; body: any; headers: any; response: User[] }
     '/api/v1/users/{id}': { query: any; params: IdParams; body: any; headers: any; response: User }
     '/api/v1/teams': { query: any; params: any; body: any; headers: any; response: Team[] }
-    '/api/v1/teams/{team_id}': { query: any; params: TeamIdParams; body: any; headers: any; response: Team }
+    '/api/v1/teams/{team_id}': { query: any; params: TeamIdParams; body: any; headers: any; response: TeamDetail }
+    '/api/v1/audits': { query: AuditListQuery; params: any; body: any; headers: any; response: AuditEntry[] }
     '/api/v1/directories/root': { query: any; params: any; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}': { query: any; params: IdParams; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: any; headers: any; response: { grants: GrantItem[] } }
@@ -266,6 +300,7 @@ export type OpenAPIs = {
     '/api/v1/files/{id}/versions/{version}/restore': { query: any; params: VersionParams; body: any; headers: any; response: FileMeta }
     '/api/v1/files/{id}/move': { query: any; params: IdParams; body: MoveFileReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/copy': { query: any; params: IdParams; body: CopyFileReq; headers: any; response: FileMeta }
+    '/api/v1/files/{id}/rename': { query: any; params: IdParams; body: RenameFileReq; headers: any; response: FileMeta }
   }
   put: {
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: SetGrantReq; headers: any; response: { ok: boolean; perms: number } }
@@ -275,9 +310,11 @@ export type OpenAPIs = {
     '/api/v1/teams/{team_id}': { query: any; params: TeamIdParams; body: UpdateTeamReq; headers: any; response: Team }
   }
   delete: {
+    '/api/v1/teams/{team_id}': { query: any; params: TeamIdParams; body: any; headers: any; response: OkResp }
     '/api/v1/teams/{team_id}/members/{user_id}': { query: any; params: TeamIdParams & { user_id: string }; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}/grants/{ptype}/{pid}': { query: any; params: GrantParams; body: any; headers: any; response: OkResp }
+    '/api/v1/files/{id}': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/files/{id}/purge': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
   }
 }

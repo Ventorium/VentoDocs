@@ -21,6 +21,15 @@ struct FileRow {
     deleted_at: Option<DateTime<Utc>>,
 }
 
+#[derive(sqlx::FromRow)]
+struct VersionRow {
+    version: i32,
+    sha256: String,
+    size: i64,
+    note: Option<String>,
+    created_by: Option<Uuid>,
+}
+
 fn to_meta(r: &FileRow) -> FileMeta {
     FileMeta {
         id: r.id,
@@ -32,6 +41,7 @@ fn to_meta(r: &FileRow) -> FileMeta {
         created_by: r.created_by,
         created_at: r.created_at,
         updated_at: r.updated_at,
+        deleted_at: r.deleted_at,
     }
 }
 
@@ -74,6 +84,7 @@ impl Files {
         created_by: Uuid,
     ) -> Result<FileMeta> {
         let id = Uuid::now_v7();
+        let mut tx = pool.begin().await?;
         sqlx::query(
             "INSERT INTO files (id, directory_id, name, size, sha256, mime, current_version, created_by)
              VALUES ($1, $2, $3, $4, $5, $6, 1, $7)",
@@ -85,7 +96,7 @@ impl Files {
         .bind(&sha.sha256)
         .bind(mime)
         .bind(created_by)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| match e {
             sqlx::Error::Database(db) if db.code().as_deref() == Some("23505") => {
@@ -93,6 +104,19 @@ impl Files {
             }
             other => other.into(),
         })?;
+        // 初始版本行（v1）
+        sqlx::query(
+            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by)
+             VALUES ($1, $2, 1, $3, $4, NULL, $5)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(id)
+        .bind(&sha.sha256)
+        .bind(sha.size as i64)
+        .bind(created_by)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Self::get_meta(pool, id).await
     }
 
@@ -304,7 +328,7 @@ impl Files {
                 .await?
                 .ok_or_else(|| StoreError::NotFound(format!("文件 {file_id}")))?;
         if row.deleted_at.is_none() {
-            return Err(StoreError::Internal("文件不在回收站".into()));
+            return Err(StoreError::InvalidInput("文件不在回收站".into()));
         }
 
         // 检查目标目录是否有同名（排除自身）
@@ -522,6 +546,30 @@ impl Files {
             }
             other => other.into(),
         })?;
+        // 复制全部版本行到新文件（内容寻址共享对象，仅复制元数据）
+        let versions: Vec<VersionRow> =
+            sqlx::query_as(
+                "SELECT version, sha256, size, note, created_by
+                 FROM file_versions WHERE file_id = $1 ORDER BY version",
+            )
+            .bind(file_id)
+            .fetch_all(pool)
+            .await?;
+        for v in &versions {
+            sqlx::query(
+                "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(id)
+            .bind(v.version)
+            .bind(&v.sha256)
+            .bind(v.size)
+            .bind(&v.note)
+            .bind(v.created_by)
+            .execute(pool)
+            .await?;
+        }
         // 审计独立提交
         super::audit::Audit::log(
             pool,

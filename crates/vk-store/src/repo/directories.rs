@@ -4,7 +4,7 @@ use super::{ROOT_DIR, Result, StoreError};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
-use vk_core::model::{Directory, EntryKind, FileMeta};
+use vk_core::model::{Directory, EntryKind, FileEntry, FileLock, FileMeta};
 
 const DIR_SELECT: &str = "id, parent_id, name, path, is_trash, deleted_at, created_by, created_at";
 
@@ -101,10 +101,18 @@ impl Directories {
             Uuid,
             DateTime<Utc>,
             DateTime<Utc>,
+            Option<Uuid>,
+            Option<String>,
+            Option<DateTime<Utc>>,
         );
         let files: Vec<DirFileRow> = sqlx::query_as(
-            "SELECT id, name, size, mime, current_version, created_by, created_at, updated_at
-                 FROM files WHERE directory_id = $1 AND deleted_at IS NULL ORDER BY name",
+            "SELECT f.id, f.name, f.size, f.mime, f.current_version, f.created_by, f.created_at, f.updated_at,
+                    l.locked_by, COALESCE(u.display_name, l.locked_by::text), l.locked_at
+                 FROM files f
+                 LEFT JOIN file_locks l ON l.file_id = f.id
+                 LEFT JOIN users u ON u.id = l.locked_by
+                 WHERE f.directory_id = $1 AND f.deleted_at IS NULL
+                 ORDER BY f.name",
         )
         .bind(dir_id)
         .fetch_all(pool)
@@ -115,16 +123,28 @@ impl Directories {
             children.push(EntryKind::Directory(to_dir(d)));
         }
         for f in files {
-            children.push(EntryKind::File(FileMeta {
-                id: f.0,
-                directory_id: dir_id,
-                name: f.1,
-                size: f.2.max(0) as u64,
-                mime: f.3,
-                current_version: f.4.max(0) as u32,
-                created_by: Some(f.5),
-                created_at: f.6,
-                updated_at: f.7,
+            let lock = match (f.8, f.9, f.10) {
+                (Some(by), Some(name), Some(at)) => Some(FileLock {
+                    locked_by: by,
+                    locked_by_name: name,
+                    locked_at: at,
+                }),
+                _ => None,
+            };
+            children.push(EntryKind::File(FileEntry {
+                file: FileMeta {
+                    id: f.0,
+                    directory_id: dir_id,
+                    name: f.1,
+                    size: f.2.max(0) as u64,
+                    mime: f.3,
+                    current_version: f.4.max(0) as u32,
+                    created_by: Some(f.5),
+                    created_at: f.6,
+                    updated_at: f.7,
+                    deleted_at: None,
+                },
+                lock,
             }));
         }
         Ok((dir, children))
@@ -243,11 +263,14 @@ impl Directories {
         }
 
         let new_parent_path = target.path.trim_end_matches('/');
-        let old_prefix = format!("{}/{}", src.path.trim_end_matches('/'), src.id);
+        // 子孙路径前缀 = 自身旧路径（materialized path 含自身 id）
+        let old_prefix = src.path.clone();
         // 先修正子孙路径，再改自身（避免父路径先变导致子树 LIKE 失效）
         let new_path = format!("{new_parent_path}/{id}");
         sqlx::query(
-            "UPDATE directories SET path = $2 || substring(path from 3) WHERE path LIKE $1 || '/' || '%' AND id <> $3",
+            "UPDATE directories
+                SET path = $2 || substring(path, length($1) + 1)
+              WHERE path LIKE $1 || '/%' AND id <> $3",
         )
         .bind(&old_prefix)
         .bind(&new_path)
@@ -333,7 +356,7 @@ impl Directories {
         .await?
         .ok_or_else(|| StoreError::NotFound(format!("目录 {id}")))?;
         if row.deleted_at.is_none() {
-            return Err(StoreError::Internal("目录不在回收站".into()));
+            return Err(StoreError::InvalidInput("目录不在回收站".into()));
         }
         if let Some(parent_id) = row.parent_id {
             let exists: Option<(Uuid,)> = sqlx::query_as(

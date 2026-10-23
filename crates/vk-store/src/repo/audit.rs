@@ -104,7 +104,7 @@ impl Audit {
     ) -> Result<Vec<AuditEntry>> {
         let rows: Vec<AuditRow> = sqlx::query_as(
             r#"
-            SELECT a.id, a.ts, a.actor_id, u.display_name, a.category, a.action,
+            SELECT a.id, a.ts, a.actor_id, u.display_name AS actor_name, a.category, a.action,
                    a.resource_type, a.resource_id, a.detail, a.ip
               FROM audit_logs a
               LEFT JOIN users u ON u.id = a.actor_id
