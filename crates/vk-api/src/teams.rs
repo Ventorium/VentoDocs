@@ -32,6 +32,7 @@ pub struct UserOut {
     pub display_name: String,
     pub role: vk_core::model::Role,
     pub disabled: bool,
+    pub auth_provider: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -42,6 +43,10 @@ fn user_out(u: &User) -> UserOut {
         display_name: u.display_name.clone(),
         role: u.role,
         disabled: u.disabled,
+        auth_provider: match u.auth_provider {
+            vk_core::model::AuthProvider::Local => "local".into(),
+            vk_core::model::AuthProvider::Ldap => "ldap".into(),
+        },
         created_at: u.created_at,
     }
 }
