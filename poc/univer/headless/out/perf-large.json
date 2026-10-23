@@ -1,22 +1,22 @@
 {
   "rows": 20001,
   "cols": 10,
-  "loadMs": 122.72,
-  "editMs": 8.18,
-  "saveMs": 156.06,
-  "totalMs": 286.96,
+  "loadMs": 115.29,
+  "editMs": 8.45,
+  "saveMs": 156.01,
+  "totalMs": 279.75,
   "memory": {
     "before": {
-      "rssMB": 150,
-      "heapMB": 61.88
+      "rssMB": 161.02,
+      "heapMB": 74.87
     },
     "afterEdit": {
-      "rssMB": 161.79,
-      "heapMB": 71.72
+      "rssMB": 172.3,
+      "heapMB": 84.64
     },
     "afterSave": {
-      "rssMB": 186.02,
-      "heapMB": 92.46
+      "rssMB": 197.01,
+      "heapMB": 105.53
     }
   },
   "snapshotBytes": 4831494,

@@ -267,9 +267,11 @@ def build_sheet(path, out_dir):
                 entry = {}
                 v = cell.value
                 if isinstance(v, str) and v.startswith("="):
-                    # 公式单元格：f 存公式（无 = 前缀），v/t 存计算缓存值
-                    # （真实导入器行为；无头 node-core 不重算公式，实测见 verify-sheets）
-                    entry["f"] = v[1:]
+                    # 公式单元格：f 必须带前导 "="（Univer 数据模型规范，
+                    # 引擎以 isFormulaString 识别公式；实测无 "=" 时公式数据模型
+                    # 为空、浏览器引擎 totalFormulasToCalculate=0 不产生计算）。
+                    # v/t 存计算缓存值（无头 node-core 不重算公式，靠缓存值读取）。
+                    entry["f"] = v
                     try:
                         ev = evaluator.eval_formula(v[1:], ws.title)
                         if ev is not None:

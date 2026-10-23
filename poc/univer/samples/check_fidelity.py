@@ -73,6 +73,7 @@ def check_sheet():
 
     all_cell_ok = True
     formula_count = 0
+    formula_v_cleared = 0
     n_cells = 0
     for name, e in exp["sheets"].items():
         sid = e["sheetId"]
@@ -86,8 +87,16 @@ def check_sheet():
             sv, sf = sc.get("v"), sc.get("f")
             if ec.get("formula") is not None:
                 formula_count += 1
-                if sf != ec["formula"] or sv != ec["value"]:
-                    bad.append("%s(f=%r v=%r, 期望 f=%r v=%r)" % (coord, sf, sv, ec["formula"], ec["value"]))
+                # 公式文本必须严格一致；缓存值 v 允许被清空——
+                # 无头端结构性编辑（insertRows）会标记公式脏并清除缓存值，
+                # 无公式引擎重算（浏览器端引擎会立即重算，值无损）。
+                if sf != ec["formula"]:
+                    bad.append("%s(f=%r, 期望 f=%r)" % (coord, sf, ec["formula"]))
+                elif sv != ec["value"]:
+                    if sv is None:
+                        formula_v_cleared += 1
+                    else:
+                        bad.append("%s(f 一致, v=%r, 期望 v=%r)" % (coord, sv, ec["value"]))
             elif sv != ec["value"]:
                 bad.append("%s(v=%r, 期望 %r)" % (coord, sv, ec["value"]))
         if bad:
@@ -120,8 +129,45 @@ def check_sheet():
 
     # 公式缓存值说明
     if formula_count:
-        report["_formula_note"] = "%d 个公式单元格 f/v 均保留（无头不重算，v 为桥接预写缓存值）" % formula_count
-    print("  共核对 %d 个单元格（含 %d 公式）" % (n_cells, formula_count))
+        report["_formula_note"] = (
+            "%d 个公式单元格 f 均保留；其中 %d 个缓存值 v 被结构性编辑清空"
+            "（无头无公式引擎不重算，属预期；浏览器端引擎即时重算）"
+            % (formula_count, formula_v_cleared)
+        )
+    print(
+        "  共核对 %d 个单元格（含 %d 公式，%d 个公式缓存值被结构编辑清空）"
+        % (n_cells, formula_count, formula_v_cleared)
+    )
+
+    # ---- 加载即快照（未编辑）：导入→导出无损基线，v/f 全量严格核对
+    load_snap_path = os.path.join(OUT, "sheet-snapshot-load.json")
+    if os.path.exists(load_snap_path):
+        lsnap = load(load_snap_path)
+        load_ok = True
+        load_n = 0
+        for name, e in exp["sheets"].items():
+            sid = e["sheetId"]
+            sheet = lsnap["sheets"][sid]
+            cell_data = sheet.get("cellData", {})
+            for coord, ec in e["cells"].items():
+                r, c = coord_to_rc(coord)
+                sc = (cell_data.get(str(r)) or {}).get(str(c)) or {}
+                load_n += 1
+                if sc.get("f") != ec.get("formula") or sc.get("v") != ec["value"]:
+                    load_ok = False
+                    print(
+                        "  [加载即快照] 不一致(%s %s): 快照=(f=%r v=%r) 期望=(f=%r v=%r)"
+                        % (name, coord, sc.get("f"), sc.get("v"), ec.get("formula"), ec["value"])
+                    )
+            got_m = sorted(
+                rc_to_coord(m["startRow"], m["startColumn"]) + ":" + rc_to_coord(m["endRow"], m["endColumn"])
+                for m in sheet.get("mergeData", [])
+            )
+            if got_m != sorted(e.get("merged") or []):
+                load_ok = False
+                print("  [加载即快照] 合并区不一致(%s): %s" % (name, got_m))
+        report["导入→导出(未编辑)"] = LOSSLESS if load_ok else MINOR
+        print("  加载即快照（未编辑）核对 %d 个单元格 + 合并区: %s" % (load_n, "无损" if load_ok else "有差异"))
     return report
 
 

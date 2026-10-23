@@ -11,6 +11,7 @@ struct TeamRow {
     id: Uuid,
     name: String,
     created_at: DateTime<Utc>,
+    member_count: i64,
 }
 
 pub struct Teams;
@@ -33,35 +34,44 @@ impl Teams {
             id,
             name: name.to_string(),
             created_at: chrono::Utc::now(),
+            member_count: 0,
         })
     }
 
+    const TEAM_SELECT: &'static str = "t.id, t.name, t.created_at, (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id)::int AS member_count";
+
     pub async fn list(pool: &PgPool) -> Result<Vec<Team>> {
-        let rows: Vec<TeamRow> =
-            sqlx::query_as("SELECT id, name, created_at FROM teams ORDER BY name")
-                .fetch_all(pool)
-                .await?;
+        let rows: Vec<TeamRow> = sqlx::query_as(&format!(
+            "SELECT {} FROM teams t ORDER BY t.name",
+            Self::TEAM_SELECT
+        ))
+        .fetch_all(pool)
+        .await?;
         Ok(rows
             .into_iter()
             .map(|r| Team {
                 id: r.id,
                 name: r.name,
                 created_at: r.created_at,
+                member_count: r.member_count as u32,
             })
             .collect())
     }
 
     pub async fn get(pool: &PgPool, id: Uuid) -> Result<Team> {
-        let r =
-            sqlx::query_as::<_, TeamRow>("SELECT id, name, created_at FROM teams WHERE id = $1")
-                .bind(id)
-                .fetch_optional(pool)
-                .await?
-                .ok_or_else(|| StoreError::NotFound(format!("团队 {id}")))?;
+        let r = sqlx::query_as::<_, TeamRow>(&format!(
+            "SELECT {} FROM teams t WHERE t.id = $1",
+            Self::TEAM_SELECT
+        ))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| StoreError::NotFound(format!("团队 {id}")))?;
         Ok(Team {
             id: r.id,
             name: r.name,
             created_at: r.created_at,
+            member_count: r.member_count as u32,
         })
     }
 

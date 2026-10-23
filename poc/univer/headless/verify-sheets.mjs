@@ -47,6 +47,12 @@ const wsNote = wb.getSheetByName('备注');
 check('按名取表(销售)', !!wsSales);
 check('按名取表(备注)', !!wsNote);
 
+// 加载即快照（未做任何编辑）：验证"导入→导出"无损基线，供 check_fidelity.py 严格核对
+writeFileSync(
+  path.join(outDir, 'sheet-snapshot-load.json'),
+  JSON.stringify(wb.save(), null, 1)
+);
+
 // ---- 工具：单元格坐标转换
 function cellToRC(coord) {
   const m = /^([A-Z]+)(\d+)$/.exec(coord);
@@ -62,10 +68,11 @@ function readCell(ws, coord) {
 // ---- 校验加载后的值 / 公式 / 合并
 check('A1 值=10', readCell(wsSales, 'A1') === 10, String(readCell(wsSales, 'A1')));
 check('B1 值=32', readCell(wsSales, 'B1') === 32, String(readCell(wsSales, 'B1')));
-// A2 公式 =A1+B1：无头环境公式引擎应计算出 42
-check('A2 公式结果=42', wsSales.getRange('A2').getValue() === 42, `getValue=${wsSales.getRange('A2').getValue()}`);
-check('G6 公式=E6*F6=420', wsSales.getRange('G6').getValue() === 420, `getValue=${wsSales.getRange('G6').getValue()}`);
-check('跨表公式 备注!B2=1002', wsNote.getRange('B2').getValue() === 1002, `getValue=${wsNote.getRange('B2').getValue()}`);
+// 注意：无头 node-core 不计算公式，getValue 读的是桥接写入的缓存值 v。
+// f 必须带前导 "="（isFormulaString 契约），否则引擎不认公式（见 docs/poc/univer-matrix.md）。
+check('A2 公式缓存值=42', wsSales.getRange('A2').getValue() === 42, `getValue=${wsSales.getRange('A2').getValue()}`);
+check('G6 公式缓存值=420', wsSales.getRange('G6').getValue() === 420, `getValue=${wsSales.getRange('G6').getValue()}`);
+check('跨表公式缓存值 备注!B2=1002', wsNote.getRange('B2').getValue() === 1002, `getValue=${wsNote.getRange('B2').getValue()}`);
 
 const merges = wsSales.getMergeData().map((m) => m.getA1Notation());
 check('合并区域 D4:G4', merges.some((a) => a.toUpperCase() === 'D4:G4'), JSON.stringify(merges));
@@ -81,7 +88,19 @@ check('编辑后 A11 可读', wsSales.getRange('A11').getValue() === 'POC 追加
 const mergesAfter = wsSales.getMergeData().map((m) => m.getA1Notation());
 check('编辑后合并 A13:B13', mergesAfter.some((a) => a === 'A13:B13'), JSON.stringify(mergesAfter));
 wsSales.insertRows(12); // 0-based 12 = 1-based 第 13 行之前，合并区被推移到 A14:B14
-check('插入行后 G10 缓存值不变=240', wsSales.getRange('G10').getValue() === 240, `= ${wsSales.getRange('G10').getValue()}`);
+// 插入行后公式单元格 G10 的缓存值 v 被引擎清除（公式标记脏、待重算），
+// 公式文本 f 完整保留。无头 node-core 无公式引擎不会重算（值保持 null）；
+// 浏览器端引擎会立即重算恢复 240（见浏览器 E2E）。
+const snapAfterInsert = wb.save();
+const salesSnapIns = snapAfterInsert.sheets[
+  Object.keys(snapAfterInsert.sheets).find((k) => snapAfterInsert.sheets[k].name === '销售')
+];
+const g10Raw = (salesSnapIns.cellData[9] || {})[6] || {};
+check(
+  '插入行后 G10 公式文本保留、缓存值按无头预期清空',
+  g10Raw.f === '=E10*F10' && (g10Raw.v === null || g10Raw.v === undefined),
+  `raw=${JSON.stringify(g10Raw)}`
+);
 const mergesAfterInsert = wsSales.getMergeData().map((m) => m.getA1Notation());
 check('插入行后合并区推移到 A14:B14', mergesAfterInsert.some((a) => a === 'A14:B14'), JSON.stringify(mergesAfterInsert));
 

@@ -38,6 +38,9 @@ pub enum StoreError {
     #[error("操作对象处于回收站")]
     InTrash,
 
+    #[error("输入无效：{0}")]
+    InvalidInput(String),
+
     #[error("内部错误：{0}")]
     Internal(String),
 

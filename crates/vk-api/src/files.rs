@@ -638,6 +638,34 @@ pub async fn move_file(
 }
 
 #[derive(Deserialize)]
+pub struct RenameReq {
+    pub new_name: String,
+}
+
+/// 重命名（同目录内）。
+pub async fn rename(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RenameReq>,
+) -> Result<Json<FileMeta>, ApiError> {
+    let pool = state.db.pool();
+    require_file_perm(pool, &user, id, Perm::MODIFY_RENAME).await?;
+    let name = body.new_name.trim().to_string();
+    if name.is_empty() {
+        return Err(ApiError::bad_request("文件名不能为空"));
+    }
+    let meta = Files::rename(pool, id, &name, user.id, None)
+        .await
+        .map_err(|e| match e {
+            StoreError::NameConflict(name) => ApiError::conflict("同级已存在同名文件")
+                .with_details(serde_json::json!({ "action": "rename", "name": name })),
+            other => other.into(),
+        })?;
+    Ok(Json(meta))
+}
+
+#[derive(Deserialize)]
 pub struct CopyFileReq {
     pub target_directory_id: Uuid,
     /// 缺省沿用原文件名

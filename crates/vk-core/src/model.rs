@@ -61,6 +61,7 @@ pub struct Team {
     pub id: Uuid,
     pub name: String,
     pub created_at: DateTime<Utc>,
+    pub member_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

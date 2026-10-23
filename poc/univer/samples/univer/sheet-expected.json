@@ -1,7 +1,7 @@
 {
  "sheets": {
   "销售": {
-   "sheetId": "sheet-s-1f585f3a5507",
+   "sheetId": "sheet-s-14b87656d7c5",
    "cells": {
     "A1": {
      "value": 10,
@@ -13,7 +13,7 @@
     },
     "A2": {
      "value": 42,
-     "formula": "A1+B1"
+     "formula": "=A1+B1"
     },
     "D4": {
      "value": "一季度销售",
@@ -49,7 +49,7 @@
     },
     "G6": {
      "value": 420,
-     "formula": "E6*F6"
+     "formula": "=E6*F6"
     },
     "D7": {
      "value": "乙",
@@ -65,7 +65,7 @@
     },
     "G7": {
      "value": 540,
-     "formula": "E7*F7"
+     "formula": "=E7*F7"
     },
     "D8": {
      "value": "丙",
@@ -81,7 +81,7 @@
     },
     "G8": {
      "value": 792,
-     "formula": "E8*F8"
+     "formula": "=E8*F8"
     },
     "D9": {
      "value": "丁",
@@ -97,7 +97,7 @@
     },
     "G9": {
      "value": 450,
-     "formula": "E9*F9"
+     "formula": "=E9*F9"
     },
     "D10": {
      "value": "戊",
@@ -113,7 +113,7 @@
     },
     "G10": {
      "value": 240,
-     "formula": "E10*F10"
+     "formula": "=E10*F10"
     }
    },
    "merged": [
@@ -133,7 +133,7 @@
    "charts": 1
   },
   "备注": {
-   "sheetId": "sheet-s-e18846d7837c",
+   "sheetId": "sheet-s-a483ee6d1c96",
    "cells": {
     "A1": {
      "value": "说明",
@@ -145,7 +145,7 @@
     },
     "B2": {
      "value": 1002,
-     "formula": "销售!A2+销售!G6+销售!G7"
+     "formula": "=销售!A2+销售!G6+销售!G7"
     },
     "A3": {
      "value": "公式引用销售!A2",
@@ -153,7 +153,7 @@
     },
     "B3": {
      "value": 84,
-     "formula": "销售!A2*2"
+     "formula": "=销售!A2*2"
     },
     "A4": {
      "value": "备注文本单元格",

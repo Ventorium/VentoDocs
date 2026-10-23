@@ -433,6 +433,60 @@ impl Files {
         Self::get_meta(pool, file_id).await
     }
 
+    /// 重命名（同目录内改名）。
+    pub async fn rename(
+        pool: &PgPool,
+        file_id: Uuid,
+        new_name: &str,
+        actor: Uuid,
+        ip: Option<&str>,
+    ) -> Result<FileMeta> {
+        let name = new_name.trim().to_string();
+        if name.is_empty() {
+            return Err(StoreError::InvalidInput("文件名不能为空".to_string()));
+        }
+        let mut tx = pool.begin().await?;
+        let row: FileRow =
+            sqlx::query_as(&format!("SELECT {FILE_SELECT} WHERE id = $1 FOR UPDATE"))
+                .bind(file_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| StoreError::NotFound(format!("文件 {file_id}")))?;
+        if row.deleted_at.is_some() {
+            return Err(StoreError::InTrash);
+        }
+        let dup: Option<()> = sqlx::query_as::<_, (i32,)>(
+            "SELECT 1 FROM files WHERE directory_id = $1 AND name = $2 AND id <> $3 AND deleted_at IS NULL",
+        )
+        .bind(row.directory_id)
+        .bind(&name)
+        .bind(file_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|_| ());
+        if dup.is_some() {
+            return Err(StoreError::NameConflict(name.clone()));
+        }
+        sqlx::query("UPDATE files SET name = $2, updated_at = now() WHERE id = $1")
+            .bind(file_id)
+            .bind(&name)
+            .execute(&mut *tx)
+            .await?;
+        super::audit::Audit::log_tx(
+            &mut *tx,
+            Some(actor),
+            "file",
+            "rename",
+            Some("file"),
+            Some(&file_id.to_string()),
+            serde_json::json!({ "from": row.name, "to": name }),
+            ip,
+        )
+        .await?;
+        tx.commit().await?;
+        Self::get_meta(pool, file_id).await
+    }
+
     /// 复制文件（内容寻址共享对象，仅新建元数据行）。
     pub async fn copy_to(
         pool: &PgPool,

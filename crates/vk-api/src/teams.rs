@@ -63,7 +63,7 @@ pub async fn list(
             id: t.id,
             name: t.name.clone(),
             created_at: t.created_at,
-            member_count: 0,
+            member_count: t.member_count as i64,
         })
         .collect();
     Ok(Json(out))
@@ -199,6 +199,36 @@ pub async fn remove_member(
         Some("team"),
         Some(&team_id.to_string()),
         serde_json::json!({ "user_id": user_id }),
+        None,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// 删除团队（仅空团队可删；仍有成员 → 400）。
+pub async fn delete(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<crate::auth::AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&user)?;
+    let pool = state.db.pool();
+    Teams::delete(pool, id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("仍有成员") {
+            ApiError::bad_request("团队仍有成员，请先移除成员")
+        } else {
+            e.into()
+        }
+    })?;
+    vk_store::repo::audit::Audit::log(
+        pool,
+        Some(user.id),
+        "admin",
+        "team_delete",
+        Some("team"),
+        Some(&id.to_string()),
+        serde_json::json!({}),
         None,
     )
     .await?;

@@ -3,6 +3,7 @@
 //! 所有写操作入口在 handler 内先做权限校验（§8.3 服务端强制），
 //! 再交给 store 层；内容写入在 store 单事务内二次校验持久锁。
 
+pub mod audits;
 pub mod auth;
 pub mod directories;
 pub mod error;
@@ -85,7 +86,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/{id}/password", post(users::set_password))
         .route("/api/v1/users/ldap/import", post(users::import_ldap))
         .route("/api/v1/teams", get(teams::list).post(teams::create))
-        .route("/api/v1/teams/{id}", get(teams::get).patch(teams::update))
+        .route(
+            "/api/v1/teams/{id}",
+            get(teams::get).patch(teams::update).delete(teams::delete),
+        )
         .route("/api/v1/teams/{id}/members", post(teams::add_member))
         .route(
             "/api/v1/teams/{team_id}/members/{user_id}",
@@ -128,8 +132,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/files/{id}/versions/{version}/restore",
             post(files::restore_version),
         )
+        .route("/api/v1/files/{id}/rename", post(files::rename))
         .route("/api/v1/files/{id}/move", post(files::move_file))
         .route("/api/v1/files/{id}/copy", post(files::copy_file))
+        .route("/api/v1/audits", get(audits::list))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

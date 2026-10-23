@@ -7,8 +7,9 @@
 //   2. sheets / docs 两个 preset 各自注册 UniverUIPlugin、UniverRenderEnginePlugin、
 //      UniverDocsPlugin；createUniver 按 pluginName 去重（后者覆盖前者），因此同一
 //      Univer 实例可混合承载工作簿与文档（与官方组合示例一致）。
-//   3. 公式计算证明：向 B11 写入 { f: "A1*B1" }（不带缓存值 v），浏览器端公式引擎
-//      应计算出 320；无头 node-core（1.0.4）不计算公式，此为两者能力差异的证据。
+//   3. 公式计算证明：向 B11 setFormula("=A1*B1")（不带缓存值 v，f 必须带前导 "="），
+//      浏览器端公式引擎应计算出 320；无头 node-core（1.0.4）不计算公式，此为两者
+//      能力差异的证据。公式契约细节见 docs/poc/univer-matrix.md。
 //   4. 页面保持可脚本化：#init / #edit / #destroy 为 index.html 中的静态按钮，
 //      外部脚本（如浏览器自动化）可直接点击；React 仅渲染右下角状态角标。
 

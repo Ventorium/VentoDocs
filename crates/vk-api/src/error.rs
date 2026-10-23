@@ -132,6 +132,7 @@ impl From<StoreError> for ApiError {
                 ApiError::version_conflict(expected, actual)
             }
             StoreError::InTrash => ApiError::conflict("操作对象处于回收站，请先恢复"),
+            StoreError::InvalidInput(msg) => ApiError::bad_request(msg),
             StoreError::Internal(msg) => {
                 tracing::error!(error = %msg, "store 内部错误");
                 ApiError::internal("服务器内部错误，请稍后重试")
