@@ -340,10 +340,14 @@ pub async fn content(
     require_file_perm(pool, &user, id, need).await?;
 
     let file = Files::get_meta(pool, id).await?;
-    let sha = match q.version {
-        Some(v) => Files::version_sha(pool, id, v).await?,
-        None => Files::current_sha(pool, id).await?,
+    let (sha, encoding) = match q.version {
+        Some(v) => Files::version_ref(pool, id, v).await?,
+        None => Files::current_ref(pool, id).await?,
     };
+    // Univer 编码版本存储的是编辑器快照 JSON，交付前转回 Office 字节。
+    if encoding == "univer" {
+        return univer_content_response(&state, &file, &sha, download).await;
+    }
     let obj = state
         .objects
         .open(&sha)
@@ -371,6 +375,56 @@ pub async fn content(
 /// 在线预览转换大小上限（20MB，防超大文件转换打爆内存）。
 const MAX_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
 
+/// 取文件名小写扩展名。
+fn ext_of(name: &str) -> String {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Univer 编码版本的内容交付：快照 JSON → Office 字节。
+async fn univer_content_response(
+    state: &AppState,
+    file: &FileMeta,
+    sha: &str,
+    download: bool,
+) -> Result<Response, ApiError> {
+    let mut obj = state
+        .objects
+        .open(sha)
+        .await
+        .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+    let len = obj
+        .metadata()
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件元数据失败：{e}")))?
+        .len();
+    let mut buf = Vec::with_capacity(len as usize);
+    obj.read_to_end(&mut buf)
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件失败：{e}")))?;
+    let snap: serde_json::Value =
+        serde_json::from_slice(&buf).map_err(|_| ApiError::internal("文件数据已损坏，无法解析"))?;
+    let unit = if ext_of(&file.name) == "docx" {
+        "doc"
+    } else {
+        "sheet"
+    };
+    let bytes = vk_convert::univer_to_office(&snap, unit, &file.name)
+        .map_err(|e| ApiError::internal(format!("Univer 快照转换失败：{e}")))?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, &file.mime)
+        .header(
+            header::CONTENT_DISPOSITION,
+            content_disposition(&file.name, download),
+        )
+        .header(header::CONTENT_LENGTH, bytes.len().to_string())
+        .body(Body::from(bytes))
+        .map_err(|e| ApiError::internal(format!("构造响应失败：{e}")))
+}
+
 /// Univer 在线预览：服务端 Rust 转换 Office/CSV → Univer 快照 JSON（M2.1 只读）。
 /// 响应：`{unitType: "sheet"|"doc", snapshot, fileVersion}`。
 pub async fn univer_preview(
@@ -381,7 +435,7 @@ pub async fn univer_preview(
     let pool = state.db.pool();
     require_file_perm(pool, &user, id, Perm::READ_PREVIEW).await?;
     let file = Files::get_meta(pool, id).await?;
-    let sha = Files::current_sha(pool, id).await?;
+    let (sha, encoding) = Files::current_ref(pool, id).await?;
     let mut obj = state
         .objects
         .open(&sha)
@@ -400,20 +454,32 @@ pub async fn univer_preview(
         .await
         .map_err(|e| ApiError::internal(format!("读取文件失败：{e}")))?;
 
-    let ext = std::path::Path::new(&file.name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    // Univer 编码版本的对象本身就是编辑器快照，直接回传。
+    if encoding == "univer" {
+        let snap: serde_json::Value = serde_json::from_slice(&buf)
+            .map_err(|_| ApiError::internal("文件数据已损坏，无法解析"))?;
+        let unit = if ext_of(&file.name) == "docx" {
+            "doc"
+        } else {
+            "sheet"
+        };
+        return Ok(Json(serde_json::json!({
+            "unitType": unit,
+            "snapshot": snap,
+            "fileVersion": file.current_version,
+        })));
+    }
+
+    let ext = ext_of(&file.name);
     if !vk_convert::is_supported(&ext) {
         return Err(ApiError::bad_request(
             "该文件类型暂不支持在线预览，请下载后查看",
         ));
     }
     let snap = vk_convert::convert(&buf, &ext, &file.name).map_err(|e| match e {
-        vk_convert::ConvertError::UnsupportedFormat => ApiError::bad_request(
-            "该文件类型暂不支持在线预览，请下载后查看",
-        ),
+        vk_convert::ConvertError::UnsupportedFormat => {
+            ApiError::bad_request("该文件类型暂不支持在线预览，请下载后查看")
+        }
         vk_convert::ConvertError::TooLarge => ApiError::preview_too_large(),
         vk_convert::ConvertError::Parse(detail) => {
             ApiError::bad_request(format!("文件解析失败：{detail}"))
@@ -493,8 +559,96 @@ pub async fn save(
     }
     let obj = obj.ok_or_else(|| ApiError::bad_request("缺少 file 字段"))?;
 
-    let meta =
-        Files::save_version(pool, id, base_version, &obj, note.as_deref(), user.id, None).await?;
+    let meta = Files::save_version(
+        pool,
+        id,
+        base_version,
+        &obj,
+        note.as_deref(),
+        "office",
+        user.id,
+        None,
+    )
+    .await?;
+    Ok(Json(meta))
+}
+
+/// Univer 在线编辑保存（M2.2）：JSON `{baseVersion, snapshot, note?}` → 新版本（encoding='univer'）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UniverSaveBody {
+    base_version: u32,
+    snapshot: serde_json::Value,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+pub async fn univer_save(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UniverSaveBody>,
+) -> Result<Json<FileMeta>, ApiError> {
+    let pool = state.db.pool();
+    require_file_perm(pool, &user, id, Perm::MODIFY_RENAME).await?;
+    let file = Files::get_meta(pool, id).await?;
+
+    let ext = ext_of(&file.name);
+    if !matches!(ext.as_str(), "xlsx" | "docx") {
+        return Err(ApiError::bad_request("该类型文件不支持在线编辑"));
+    }
+    // 轻量结构校验：xlsx 需 sheets/sheetOrder，docx 需 body。
+    match ext.as_str() {
+        "xlsx" => {
+            if body.snapshot.get("sheets").is_none() || body.snapshot.get("sheetOrder").is_none() {
+                return Err(ApiError::bad_request(
+                    "快照结构不完整：缺少 sheets/sheetOrder",
+                ));
+            }
+        }
+        "docx" => {
+            if body.snapshot.get("body").is_none() {
+                return Err(ApiError::bad_request("快照结构不完整：缺少 body"));
+            }
+        }
+        _ => unreachable!(),
+    }
+    lock_precheck(pool, &user, id).await?;
+
+    let bytes = serde_json::to_vec(&body.snapshot)
+        .map_err(|e| ApiError::internal(format!("序列化快照失败：{e}")))?;
+    if bytes.len() as u64 > state.cfg.max_upload_bytes {
+        return Err(ApiError::upload_too_large());
+    }
+    let obj = state
+        .objects
+        .ingest(std::io::Cursor::new(bytes), state.cfg.max_upload_bytes)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("超过上限") {
+                ApiError::upload_too_large()
+            } else {
+                ApiError::internal(format!("文件写入失败：{msg}"))
+            }
+        })?;
+
+    let note = body
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let meta = Files::save_version(
+        pool,
+        id,
+        body.base_version,
+        &obj,
+        note,
+        "univer",
+        user.id,
+        None,
+    )
+    .await?;
     Ok(Json(meta))
 }
 

@@ -108,6 +108,15 @@ export type VersionInfo = {
   created_by: string
   created_at: string
   created_by_name: string
+  /** office = 上传的原始文件；univer = 在线编辑保存的快照。 */
+  encoding: 'office' | 'univer'
+}
+
+/** Univer 在线编辑保存（POST /files/{id}/univer-save）。 */
+export type UniverSaveReq = {
+  baseVersion: number
+  snapshot: Record<string, unknown>
+  note?: string
 }
 
 /** 审计日志条目（管理员列表接口返回）。 */
@@ -301,6 +310,7 @@ export type OpenAPIs = {
     '/api/v1/directories/{id}/restore': { query: any; params: IdParams; body: any; headers: any; response: Directory }
     '/api/v1/directories/{id}/files': { query: any; params: IdParams; body: SaveFileReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/save': { query: any; params: IdParams; body: SaveFileReq; headers: any; response: FileMeta }
+    '/api/v1/files/{id}/univer-save': { query: any; params: IdParams; body: UniverSaveReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/lock': { query: any; params: IdParams; body: any; headers: any; response: { locked: true } }
     '/api/v1/files/{id}/unlock': { query: any; params: IdParams; body: UnlockReq; headers: any; response: OkResp }
     '/api/v1/files/{id}/restore': { query: any; params: IdParams; body: any; headers: any; response: FileMeta }

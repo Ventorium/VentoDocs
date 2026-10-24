@@ -47,6 +47,7 @@ quick-xml = { version = "0.42", features = ["encoding"] }
 zip = "2"
 encoding_rs = "0.8"
 docx-rs = "0.4.22"
+rust_xlsxwriter = "0.101"
 
 [profile.release]
 lto = true

@@ -1,4 +1,7 @@
-//! vk-convert：Office / CSV 字节流 → Univer 数据模型快照（纯同步，M2.1 只读预览）。
+//! vk-convert：Office / CSV 字节流 ↔ Univer 数据模型快照（纯同步）。
+//!
+//! - 正向（M2.1 只读预览）：[convert]，Office / CSV → Univer 快照；
+//! - 反向（M2.2 在线编辑保存）：[univer_to_office]，Univer 快照 → xlsx / docx。
 //!
 //! 支持格式与保真度（详见 docs/poc/univer-matrix.md）：
 //! - xlsx：值 / 公式 / 合并单元格 / 列宽行高 / 基础样式（粗斜体下划线、字体颜色、
@@ -11,7 +14,10 @@
 pub mod doc;
 pub mod formula;
 pub mod sheet;
+pub mod univer;
 mod zipxml;
+
+pub use univer::univer_to_office;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -45,16 +51,26 @@ pub fn convert(bytes: &[u8], ext: &str, file_name: &str) -> Result<UniverSnapsho
     }
     let ext = ext.trim_start_matches('.').to_ascii_lowercase();
     match ext.as_str() {
-        "xlsx" | "xlsm" => sheet::xlsx_workbook(bytes, file_name)
-            .map(|snapshot| UniverSnapshot { unit_type: "sheet", snapshot }),
-        "xls" => sheet::xls_workbook(bytes, file_name)
-            .map(|snapshot| UniverSnapshot { unit_type: "sheet", snapshot }),
-        "csv" => sheet::csv_workbook(bytes, file_name, b',')
-            .map(|snapshot| UniverSnapshot { unit_type: "sheet", snapshot }),
-        "tsv" => sheet::csv_workbook(bytes, file_name, b'\t')
-            .map(|snapshot| UniverSnapshot { unit_type: "sheet", snapshot }),
-        "docx" => doc::document(bytes, file_name)
-            .map(|snapshot| UniverSnapshot { unit_type: "doc", snapshot }),
+        "xlsx" | "xlsm" => sheet::xlsx_workbook(bytes, file_name).map(|snapshot| UniverSnapshot {
+            unit_type: "sheet",
+            snapshot,
+        }),
+        "xls" => sheet::xls_workbook(bytes, file_name).map(|snapshot| UniverSnapshot {
+            unit_type: "sheet",
+            snapshot,
+        }),
+        "csv" => sheet::csv_workbook(bytes, file_name, b',').map(|snapshot| UniverSnapshot {
+            unit_type: "sheet",
+            snapshot,
+        }),
+        "tsv" => sheet::csv_workbook(bytes, file_name, b'\t').map(|snapshot| UniverSnapshot {
+            unit_type: "sheet",
+            snapshot,
+        }),
+        "docx" => doc::document(bytes, file_name).map(|snapshot| UniverSnapshot {
+            unit_type: "doc",
+            snapshot,
+        }),
         _ => Err(ConvertError::UnsupportedFormat),
     }
 }

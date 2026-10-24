@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useRequest } from 'ahooks'
-import { Alert, Button, Modal, Space } from 'antd'
+import { Alert, Button, Modal, Space, Tooltip } from 'antd'
 import {
   ArrowLeftOutlined,
   DownloadOutlined,
+  EditOutlined,
   HistoryOutlined,
   LockOutlined,
   UnlockOutlined,
@@ -20,13 +21,18 @@ import { hasPerm, PERM } from '@/lib/perm'
 import { useAuth } from '@/store/useAuth'
 import FilePreview from './components/FilePreview'
 
-/** 文件详情页：元数据 + 锁定状态 + 预览 + 下载 + 版本历史。 */
+/** 支持在线编辑的扩展名（其余类型只读预览）。 */
+const EDITABLE_EXT = new Set(['xlsx', 'docx'])
+
+/** 文件详情页：元数据 + 锁定状态 + 预览 + 在线编辑 + 下载 + 版本历史。 */
 const FileDetailPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
   const me = user!
   const [versionsOpen, setVersionsOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [entering, setEntering] = useState(false)
 
   const { data, loading, error, refresh } = useRequest(
     async () => {
@@ -50,6 +56,12 @@ const FileDetailPage = () => {
   const canManageLock = hasPerm(perms, PERM.READ_PREVIEW)
   const isLockOwner = !!lock && lock.locked_by === me.id
   const isAdmin = me.role === 'admin'
+  const ext = file?.name.includes('.')
+    ? ((file.name.split('.').pop() ?? '').toLowerCase() as string)
+    : ''
+  const canEdit = hasPerm(perms, PERM.MODIFY_RENAME) && EDITABLE_EXT.has(ext)
+  /** 编辑入口：有修改权限且文件未被他人锁定。 */
+  const canEnterEdit = canEdit && (!lock || isLockOwner)
 
   const doDownload = async () => {
     if (!file) return
@@ -83,6 +95,34 @@ const FileDetailPage = () => {
     if (err) return
     msg.success('文件已解锁')
     refresh()
+  }
+
+  /** 进入编辑：自己已锁直接编辑；未锁则自动加锁后编辑。 */
+  const doEnterEdit = async () => {
+    if (!file || editing || !canEnterEdit) return
+    if (isLockOwner) {
+      setEditing(true)
+      return
+    }
+    setEntering(true)
+    try {
+      const { error: err, response } = await client.post('/api/v1/files/{id}/lock', {
+        params: { id: file.id },
+      })
+      if (err) {
+        if (response?.status === 409) msg.warning('文件已被他人锁定，无法进入编辑')
+        return
+      }
+      setEditing(true)
+      refresh()
+    } finally {
+      setEntering(false)
+    }
+  }
+
+  /** 退出编辑：仅退出编辑模式，不释放锁（手动解锁/管理员强制解锁）。 */
+  const doExitEdit = () => {
+    setEditing(false)
   }
 
   const doUnlock = (force: boolean) => {
@@ -129,6 +169,21 @@ const FileDetailPage = () => {
                 下载
               </Button>
             )}
+            {canEdit && !editing && (
+              <Tooltip
+                title={canEnterEdit ? undefined : `文件正由 ${lock?.locked_by_name ?? '他人'} 锁定`}
+              >
+                <Button
+                  type="primary"
+                  icon={<EditOutlined />}
+                  loading={entering}
+                  disabled={!canEnterEdit}
+                  onClick={doEnterEdit}
+                >
+                  进入编辑
+                </Button>
+              </Tooltip>
+            )}
             {canManageLock && !lock && (
               <Button icon={<LockOutlined />} onClick={doLock}>
                 锁定
@@ -174,7 +229,16 @@ const FileDetailPage = () => {
               <span>更新时间：{formatDateTime(file.updated_at)}</span>
             </div>
             <div className="rounded-8px border-1px border-#E5E7EB bg-white p-16px">
-              <FilePreview file={file} onDownload={doDownload} />
+              <FilePreview
+                file={file}
+                onDownload={doDownload}
+                editable={editing && canEdit}
+                onExitEdit={doExitEdit}
+                onSaved={() => {
+                  setEditing(false)
+                  refresh()
+                }}
+              />
             </div>
           </div>
         )}

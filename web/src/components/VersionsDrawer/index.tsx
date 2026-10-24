@@ -85,6 +85,13 @@ const VersionsDrawer = ({ open, fileId, fileName, onClose }: VersionsDrawerProps
             render: (s: number) => formatBytes(s),
           },
           {
+            title: '来源',
+            dataIndex: 'encoding',
+            width: 80,
+            render: (enc: 'office' | 'univer') =>
+              enc === 'univer' ? <Tag color="purple" className="!m-0">在线</Tag> : '—',
+          },
+          {
             title: '说明',
             dataIndex: 'note',
             ellipsis: true,

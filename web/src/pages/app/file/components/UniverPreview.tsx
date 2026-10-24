@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button } from 'antd'
-import { DownloadOutlined, RedoOutlined } from '@ant-design/icons'
+import { Button, Modal, Space } from 'antd'
+import { DownloadOutlined, RedoOutlined, SaveOutlined } from '@ant-design/icons'
 import { useRequest } from 'ahooks'
 import { createUniver, LocaleType } from '@univerjs/presets'
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
@@ -9,6 +9,7 @@ import { UniverDocsCorePreset } from '@univerjs/preset-docs-core'
 import docsZhCN from '@univerjs/preset-docs-core/locales/zh-CN'
 import { client } from '@/api'
 import type { FileMeta } from '@/api/schema'
+import { msg } from '@/components/GlobalMessage'
 import FileIcon from '@/components/FileIcon'
 
 type UniverPreviewProps = {
@@ -16,6 +17,11 @@ type UniverPreviewProps = {
   /** sheet = xlsx/xls/csv；doc = docx */
   unit: 'sheet' | 'doc'
   onDownload: () => void
+  /** 在线编辑模式（M2.2）：不设置只读权限，工具栏提供保存/退出。 */
+  editable: boolean
+  onExitEdit: () => void
+  /** 保存成功回调。 */
+  onSaved: () => void
 }
 
 /**
@@ -29,8 +35,9 @@ type UniverPreviewProps = {
  * - 不传 workerURL → 公式引擎跑主线程（快照已带缓存值 v，仅兜底计算）；
  * - 每次挂载使用全新的容器元素，卸载时 queueMicrotask 内 dispose（POC-1 验证过的生命周期）。
  */
-const UniverPreview = ({ file, unit, onDownload }: UniverPreviewProps) => {
+const UniverPreview = ({ file, unit, onDownload, editable, onExitEdit, onSaved }: UniverPreviewProps) => {
   const [initError, setInitError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const { data, loading, error, refresh } = useRequest(
     async () => {
@@ -57,6 +64,8 @@ const UniverPreview = ({ file, unit, onDownload }: UniverPreviewProps) => {
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const univerRef = useRef<{ univer: { dispose(): void } } | null>(null)
+  /** 当前文档/工作簿 API：save() 产出与后端存储同构的快照（FWorkbook.save / FDocument.save）。 */
+  const apiRef = useRef<{ save: () => unknown } | null>(null)
 
   useEffect(() => {
     const el = containerRef.current
@@ -75,14 +84,20 @@ const UniverPreview = ({ file, unit, onDownload }: UniverPreviewProps) => {
       univerRef.current = { univer }
       if (unit === 'sheet') {
         const wb = univerAPI.createWorkbook(data.snapshot)
-        void wb.getWorkbookPermission().setMode('viewer').catch((e: unknown) => {
-          console.warn('[UniverPreview] 设置只读失败', e)
-        })
+        apiRef.current = { save: () => wb.save() }
+        if (!editable) {
+          void wb.getWorkbookPermission().setMode('viewer').catch((e: unknown) => {
+            console.warn('[UniverPreview] 设置只读失败', e)
+          })
+        }
       } else {
         const doc = univerAPI.createDocument(data.snapshot)
-        void doc.getPermission().setReadOnly().catch((e: unknown) => {
-          console.warn('[UniverPreview] 设置只读失败', e)
-        })
+        apiRef.current = { save: () => doc.save() }
+        if (!editable) {
+          void doc.getPermission().setReadOnly().catch((e: unknown) => {
+            console.warn('[UniverPreview] 设置只读失败', e)
+          })
+        }
       }
       console.info(`[UniverPreview] ${unit} 初始化完成 (${(performance.now() - t0).toFixed(0)}ms)`)
     } catch (e) {
@@ -102,7 +117,50 @@ const UniverPreview = ({ file, unit, onDownload }: UniverPreviewProps) => {
         })
       }
     }
-  }, [data, unit])
+  }, [data, unit, editable])
+
+  /** 保存当前编辑为新版本文档（baseVersion 不匹配 → 409 提示冲突）。 */
+  const handleSave = async () => {
+    const api = apiRef.current
+    if (!api || !data || saving) return
+    setSaving(true)
+    try {
+      const snapshot = api.save() as Record<string, unknown>
+      const { error: err, data: saved, response } = await client.post('/api/v1/files/{id}/univer-save', {
+        params: { id: file.id },
+        body: { baseVersion: data.fileVersion, snapshot },
+      })
+      if (err) {
+        if (response?.status === 409) {
+          let actual: number | undefined
+          try {
+            const body = (await response.clone().json()) as {
+              error?: { details?: { actual?: number } }
+            } | undefined
+            actual = body?.error?.details?.actual
+          } catch {
+            // 保留默认提示
+          }
+          Modal.confirm({
+            title: '版本冲突',
+            content: `文件已被更新到 v${actual ?? '最新版本'}，你的编辑尚未保存。是否重新加载最新版本？`,
+            okText: '重新加载',
+            cancelText: '继续编辑',
+            onOk: () => {
+              apiRef.current = null
+              refresh()
+            },
+          })
+        }
+        // 423 与其他错误由全局 errorHandler 提示
+        return
+      }
+      msg.success(`已保存为 v${saved.current_version}`)
+      onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const state: 'loading' | 'noPerm' | 'error' | 'ready' =
     loading || !data
@@ -150,11 +208,28 @@ const UniverPreview = ({ file, unit, onDownload }: UniverPreviewProps) => {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full overflow-hidden rounded-8px"
-      style={{ height: 'calc(100vh - 340px)', minHeight: 420 }}
-    />
+    <div className="flex flex-col gap-8px">
+      {editable && (
+        <div className="flex items-center justify-between gap-12px">
+          <span className="text-13px text-rgba(0,0,0,0.45)">
+            正在编辑 v{data?.fileVersion ?? ''}，保存后生成新版本
+          </span>
+          <Space>
+            <Button onClick={onExitEdit} disabled={saving}>
+              退出编辑
+            </Button>
+            <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+              保存
+            </Button>
+          </Space>
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        className="w-full overflow-hidden rounded-8px"
+        style={{ height: editable ? 'calc(100vh - 400px)' : 'calc(100vh - 340px)', minHeight: 420 }}
+      />
+    </div>
   )
 }
 

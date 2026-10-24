@@ -28,6 +28,7 @@ struct VersionRow {
     size: i64,
     note: Option<String>,
     created_by: Option<Uuid>,
+    encoding: String,
 }
 
 fn to_meta(r: &FileRow) -> FileMeta {
@@ -104,10 +105,10 @@ impl Files {
             }
             other => other.into(),
         })?;
-        // 初始版本行（v1）
+        // 初始版本行（v1，原始上传字节 = office 编码）
         sqlx::query(
-            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by)
-             VALUES ($1, $2, 1, $3, $4, NULL, $5)",
+            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by, encoding)
+             VALUES ($1, $2, 1, $3, $4, NULL, $5, 'office')",
         )
         .bind(Uuid::now_v7())
         .bind(id)
@@ -122,12 +123,14 @@ impl Files {
 
     /// 版本化保存（需求 §8.3 单事务）：
     /// 行锁 → 校验基线版本 → 检查持久锁 → 写入版本行 → 更新 current_version → 审计同事务。
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_version(
         pool: &PgPool,
         file_id: Uuid,
         base_version: u32,
         new_object: &UploadResult,
         note: Option<&str>,
+        encoding: &str,
         actor: Uuid,
         ip: Option<&str>,
     ) -> Result<FileMeta> {
@@ -167,8 +170,8 @@ impl Files {
         // 4. 新版本行
         let new_version = row.current_version + 1;
         sqlx::query(
-            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by, encoding)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(Uuid::now_v7())
         .bind(file_id)
@@ -177,6 +180,7 @@ impl Files {
         .bind(new_object.size as i64)
         .bind(note)
         .bind(actor)
+        .bind(encoding)
         .execute(&mut *tx)
         .await?;
 
@@ -238,8 +242,8 @@ impl Files {
             return Err(StoreError::FileLocked);
         }
 
-        let (sha, size): (String, i64) = sqlx::query_as(
-            "SELECT sha256, size FROM file_versions WHERE file_id = $1 AND version = $2",
+        let (sha, size, encoding): (String, i64, String) = sqlx::query_as(
+            "SELECT sha256, size, encoding FROM file_versions WHERE file_id = $1 AND version = $2",
         )
         .bind(file_id)
         .bind(target_version as i32)
@@ -249,8 +253,8 @@ impl Files {
 
         let new_version = row.current_version + 1;
         sqlx::query(
-            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by, encoding)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(Uuid::now_v7())
         .bind(file_id)
@@ -259,6 +263,7 @@ impl Files {
         .bind(size)
         .bind(Some(format!("恢复自版本 {target_version}")))
         .bind(actor)
+        .bind(&encoding)
         .execute(&mut *tx)
         .await?;
 
@@ -547,18 +552,17 @@ impl Files {
             other => other.into(),
         })?;
         // 复制全部版本行到新文件（内容寻址共享对象，仅复制元数据）
-        let versions: Vec<VersionRow> =
-            sqlx::query_as(
-                "SELECT version, sha256, size, note, created_by
+        let versions: Vec<VersionRow> = sqlx::query_as(
+            "SELECT version, sha256, size, note, created_by, encoding
                  FROM file_versions WHERE file_id = $1 ORDER BY version",
-            )
-            .bind(file_id)
-            .fetch_all(pool)
-            .await?;
+        )
+        .bind(file_id)
+        .fetch_all(pool)
+        .await?;
         for v in &versions {
             sqlx::query(
-                "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO file_versions (id, file_id, version, sha256, size, note, created_by, encoding)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             )
             .bind(Uuid::now_v7())
             .bind(id)
@@ -567,6 +571,7 @@ impl Files {
             .bind(v.size)
             .bind(&v.note)
             .bind(v.created_by)
+            .bind(&v.encoding)
             .execute(pool)
             .await?;
         }
@@ -614,7 +619,7 @@ impl Files {
         Self::get_meta(pool, file_id).await?;
         let rows = sqlx::query_as::<_, VersionInfo>(
             "SELECT v.id, v.file_id, v.version, v.size, v.note, v.created_by, v.created_at,
-             COALESCE(u.username, 'system') AS created_by_name
+             v.encoding, COALESCE(u.username, 'system') AS created_by_name
              FROM file_versions v LEFT JOIN users u ON u.id = v.created_by
              WHERE v.file_id = $1 ORDER BY v.version DESC LIMIT $2 OFFSET $3",
         )
@@ -626,31 +631,37 @@ impl Files {
         Ok(rows)
     }
 
-    /// 下载/预览用：取 current 版本对象 sha。
-    pub async fn current_sha(pool: &PgPool, file_id: Uuid) -> Result<String> {
+    /// 下载/预览用：取 current 版本对象引用 `(sha256, 存储编码)`。
+    pub async fn current_ref(pool: &PgPool, file_id: Uuid) -> Result<(String, String)> {
         let r = Self::get_row(pool, file_id).await?;
         if r.deleted_at.is_some() {
             return Err(StoreError::NotFound(format!("文件 {file_id} 已删除")));
         }
-        let sha: (String,) =
-            sqlx::query_as("SELECT sha256 FROM file_versions WHERE file_id = $1 AND version = $2")
-                .bind(file_id)
-                .bind(r.current_version)
-                .fetch_one(pool)
-                .await?;
-        Ok(sha.0)
+        let (sha, encoding): (String, String) = sqlx::query_as(
+            "SELECT sha256, encoding FROM file_versions WHERE file_id = $1 AND version = $2",
+        )
+        .bind(file_id)
+        .bind(r.current_version)
+        .fetch_one(pool)
+        .await?;
+        Ok((sha, encoding))
     }
 
-    /// 取指定版本对象 sha（历史版本预览/下载）。
-    pub async fn version_sha(pool: &PgPool, file_id: Uuid, version: u32) -> Result<String> {
-        let (sha,): (String,) =
-            sqlx::query_as("SELECT sha256 FROM file_versions WHERE file_id = $1 AND version = $2")
-                .bind(file_id)
-                .bind(version as i32)
-                .fetch_optional(pool)
-                .await?
-                .ok_or_else(|| StoreError::NotFound(format!("版本 {version}")))?;
-        Ok(sha)
+    /// 取指定版本对象引用 `(sha256, 存储编码)`（历史版本预览/下载）。
+    pub async fn version_ref(
+        pool: &PgPool,
+        file_id: Uuid,
+        version: u32,
+    ) -> Result<(String, String)> {
+        let (sha, encoding): (String, String) = sqlx::query_as(
+            "SELECT sha256, encoding FROM file_versions WHERE file_id = $1 AND version = $2",
+        )
+        .bind(file_id)
+        .bind(version as i32)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| StoreError::NotFound(format!("版本 {version}")))?;
+        Ok((sha, encoding))
     }
 
     /// 持久锁：原子锁定（INSERT ON CONFLICT DO NOTHING，受影响 0 行=已锁定）。
@@ -772,4 +783,5 @@ pub struct VersionInfo {
     pub created_by: Uuid,
     pub created_at: DateTime<Utc>,
     pub created_by_name: String,
+    pub encoding: String,
 }
