@@ -24,6 +24,8 @@ walkdir = "2"
 zip = "2"
 tar = "0.4"
 flate2 = "1"
+# async API 无条件可用；TLS 用 rustls+ring（无需系统 OpenSSL）
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

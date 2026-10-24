@@ -95,6 +95,11 @@ impl ApiError {
         Self::new(StatusCode::GONE, "PUBLISH_DISABLED", "发布站点已停用")
     }
 
+    /// 分享/发布目标资源已被删除（§10：trashed 资源返回 410）。
+    pub fn gone(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::GONE, "GONE", message)
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", message)
     }

@@ -8,6 +8,7 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  SearchOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -32,6 +33,7 @@ const SideMenu = () => {
     const base: MenuItem[] = [
       { key: '/app/files', icon: <FileTextOutlined />, label: '文件管理' },
       { key: '/app/trash', icon: <DeleteOutlined />, label: '回收站' },
+      { key: '/app/search', icon: <SearchOutlined />, label: '搜索' },
     ]
     if (isAdmin) {
       base.push(

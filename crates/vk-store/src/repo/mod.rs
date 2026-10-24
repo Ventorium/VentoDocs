@@ -4,5 +4,8 @@ pub mod audit;
 pub mod directories;
 pub mod files;
 pub mod grants;
+pub mod ldap;
+pub mod publishes;
+pub mod shares;
 pub mod teams;
 pub mod users;

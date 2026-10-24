@@ -89,9 +89,10 @@ pub fn xlsx_workbook(bytes: &[u8], file_name: &str) -> Result<Value, ConvertErro
                         }
                         let mut entry = Map::new();
                         if let Some(f) = &cf.formula
-                            && !f.is_empty() {
-                                entry.insert("f".into(), json!(format!("={f}")));
-                            }
+                            && !f.is_empty()
+                        {
+                            entry.insert("f".into(), json!(format!("={f}")));
+                        }
                         if let Some(v) = v {
                             entry.insert("v".into(), v);
                         }
@@ -108,7 +109,7 @@ pub fn xlsx_workbook(bytes: &[u8], file_name: &str) -> Result<Value, ConvertErro
                         return Err(ConvertError::Parse(format!(
                             "读取工作表 {} 失败：{}",
                             sh.name, e
-                        )))
+                        )));
                     }
                 }
             }
@@ -311,7 +312,12 @@ pub fn csv_workbook(bytes: &[u8], file_name: &str, delim: u8) -> Result<Value, C
             }
             mr = mr.max(r as u32);
             mc = mc.max(c as u32);
-            put_cell(&mut cells, r as u32, c as u32, cell_entry_t(json!(f), Some(1)));
+            put_cell(
+                &mut cells,
+                r as u32,
+                c as u32,
+                cell_entry_t(json!(f), Some(1)),
+            );
         }
     }
 
@@ -471,26 +477,29 @@ fn is_blank(d: &DataRef) -> bool {
 /// 时长按 H:MM:SS 文本；解析失败回退为原始数值。
 pub(crate) fn excel_datetime_value(dt: &calamine::ExcelDateTime) -> (Option<Value>, Option<u8>) {
     if dt.is_duration()
-        && let Some(d) = dt.as_duration() {
-            let total_secs = d.num_seconds().abs();
-            let h = total_secs / 3600;
-            let m = (total_secs % 3600) / 60;
-            let s = total_secs % 60;
-            let days = h / 24;
-            let hh = h % 24;
-            let s = if days > 0 {
-                format!("{days}d:{hh:02}:{m:02}:{s:02}")
-            } else {
-                format!("{h:02}:{m:02}:{s:02}")
-            };
-            return (Some(json!(s)), Some(1));
-        }
-    if let Some(naive) = dt.as_datetime() {
-        let s = if naive.time().hour() == 0 && naive.time().minute() == 0 && naive.time().second() == 0 {
-            naive.format("%Y-%m-%d").to_string()
+        && let Some(d) = dt.as_duration()
+    {
+        let total_secs = d.num_seconds().abs();
+        let h = total_secs / 3600;
+        let m = (total_secs % 3600) / 60;
+        let s = total_secs % 60;
+        let days = h / 24;
+        let hh = h % 24;
+        let s = if days > 0 {
+            format!("{days}d:{hh:02}:{m:02}:{s:02}")
         } else {
-            naive.format("%Y-%m-%d %H:%M:%S").to_string()
+            format!("{h:02}:{m:02}:{s:02}")
         };
+        return (Some(json!(s)), Some(1));
+    }
+    if let Some(naive) = dt.as_datetime() {
+        let s =
+            if naive.time().hour() == 0 && naive.time().minute() == 0 && naive.time().second() == 0
+            {
+                naive.format("%Y-%m-%d").to_string()
+            } else {
+                naive.format("%Y-%m-%d %H:%M:%S").to_string()
+            };
         return (Some(json!(s)), Some(1));
     }
     (Some(json!(dt.as_f64())), Some(2))
@@ -541,15 +550,18 @@ fn style_data(st: &StyleTable, idx: u32) -> Option<Value> {
             s.insert("sz".into(), json!(sz as f64 / 2.0));
         }
         if let Some(c) = &f.color
-            && c != "#000000" {
-                s.insert("cl".into(), json!({ "rgb": c }));
-            }
+            && c != "#000000"
+        {
+            s.insert("cl".into(), json!({ "rgb": c }));
+        }
     }
 
     if let Some(Some(bg)) = fill
-        && bg != "#000000" && bg != "#FFFFFF" {
-            s.insert("bg".into(), json!({ "rgb": bg }));
-        }
+        && bg != "#000000"
+        && bg != "#FFFFFF"
+    {
+        s.insert("bg".into(), json!({ "rgb": bg }));
+    }
 
     if let Some(h) = &horizontal {
         let ht = match h.as_str() {
@@ -727,7 +739,10 @@ mod tests {
         // CRLF
         assert_eq!(
             csv_parse_rows("a,b\r\nc,d\r\n", b','),
-            vec![vec!["a".to_string(), "b".into()], vec!["c".to_string(), "d".into()]]
+            vec![
+                vec!["a".to_string(), "b".into()],
+                vec!["c".to_string(), "d".into()]
+            ]
         );
         // 跨行引号字段
         assert_eq!(
@@ -753,7 +768,10 @@ mod tests {
         // TSV
         assert_eq!(
             csv_parse_rows("a\tb\n1\t2\n", b'\t'),
-            vec![vec!["a".to_string(), "b".to_string()], vec!["1".to_string(), "2".to_string()]]
+            vec![
+                vec!["a".to_string(), "b".to_string()],
+                vec!["1".to_string(), "2".to_string()]
+            ]
         );
     }
 
@@ -779,7 +797,10 @@ mod tests {
             dataref_to_value(&to_ref(&Data::String(String::new()))).unwrap(),
             (None, None)
         );
-        assert_eq!(dataref_to_value(&to_ref(&Data::Empty)).unwrap(), (None, None));
+        assert_eq!(
+            dataref_to_value(&to_ref(&Data::Empty)).unwrap(),
+            (None, None)
+        );
         assert!(is_blank(&to_ref(&Data::Empty)));
         assert!(is_blank(&to_ref(&Data::String(String::new()))));
         assert!(!is_blank(&to_ref(&Data::Int(0))));

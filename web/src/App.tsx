@@ -27,7 +27,9 @@ const _App = () => {
 
   useEffect(() => {
     if (ready) {
-      if (!logged && pathname !== '/auth/login') {
+      // 公开页（分享 /s/、发布站点 /p/）无需登录
+      const isPublicPage = pathname.startsWith('/s/') || pathname.startsWith('/p/')
+      if (!logged && pathname !== '/auth/login' && !isPublicPage) {
         navigate('/auth/login', { replace: true })
       }
     }

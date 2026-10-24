@@ -8,6 +8,7 @@ import {
   EditOutlined,
   HistoryOutlined,
   LockOutlined,
+  ShareAltOutlined,
   UnlockOutlined,
 } from '@ant-design/icons'
 import { saveAs } from 'file-saver'
@@ -20,6 +21,7 @@ import { formatBytes, formatDateTime } from '@/lib/format'
 import { hasPerm, PERM } from '@/lib/perm'
 import { useAuth } from '@/store/useAuth'
 import FilePreview from './components/FilePreview'
+import ShareModal from '@/pages/app/files/components/ShareModal'
 
 /** 支持在线编辑的扩展名（其余类型只读预览）。 */
 const EDITABLE_EXT = new Set(['xlsx', 'docx'])
@@ -31,6 +33,7 @@ const FileDetailPage = () => {
   const { user } = useAuth()
   const me = user!
   const [versionsOpen, setVersionsOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [entering, setEntering] = useState(false)
 
@@ -53,6 +56,7 @@ const FileDetailPage = () => {
   const perms = data?.my_perms ?? 0
 
   const canDownload = hasPerm(perms, PERM.DOWNLOAD)
+  const canShare = hasPerm(perms, PERM.SHARE)
   const canManageLock = hasPerm(perms, PERM.READ_PREVIEW)
   const isLockOwner = !!lock && lock.locked_by === me.id
   const isAdmin = me.role === 'admin'
@@ -169,6 +173,11 @@ const FileDetailPage = () => {
                 下载
               </Button>
             )}
+            {canShare && (
+              <Button icon={<ShareAltOutlined />} onClick={() => setShareOpen(true)}>
+                分享
+              </Button>
+            )}
             {canEdit && !editing && (
               <Tooltip
                 title={canEnterEdit ? undefined : `文件正由 ${lock?.locked_by_name ?? '他人'} 锁定`}
@@ -250,6 +259,16 @@ const FileDetailPage = () => {
         fileName={file?.name}
         onClose={() => setVersionsOpen(false)}
       />
+
+      {file && (
+        <ShareModal
+          open={shareOpen}
+          resourceType="file"
+          resourceId={file.id}
+          resourceName={file.name}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </div>
   )
 }

@@ -138,6 +138,7 @@ pub async fn bootstrap(
         display_name,
         &body.password,
         Role::Admin,
+        None,
     )
     .await?;
     Audit::log(
@@ -165,13 +166,13 @@ pub struct LoginReq {
     pub password: String,
 }
 
-/// 本地账号登录；LDAP 导入账号 v1 不支持本地登录。
+/// 本地账号登录（用户名或邮箱均可）；LDAP 导入账号 v1 不支持本地登录。
 pub async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let pool = state.db.pool();
-    let user = Users::get_by_username(pool, &body.username)
+    let user = Users::get_by_identifier(pool, &body.username)
         .await?
         .ok_or_else(ApiError::unauthorized)?;
     if user.disabled {
@@ -187,6 +188,8 @@ pub async fn login(
     if !vk_store::repo::users::verify_password(&body.password, hash) {
         return Err(ApiError::unauthorized());
     }
+    // best-effort 记录最后登录时间
+    let _ = Users::touch_last_login(pool, user.id).await;
     let token = sign_token(&state.cfg.jwt_secret, &user, state.cfg.jwt_ttl_hours)?;
     Ok(Json(serde_json::json!({
         "token": token,

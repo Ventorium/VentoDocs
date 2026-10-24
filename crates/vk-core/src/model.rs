@@ -27,6 +27,12 @@ pub struct User {
     pub auth_provider: AuthProvider,
     pub role: Role,
     pub disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ldap_dn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_login_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -39,6 +45,8 @@ pub struct UserPublic {
     pub auth_provider: AuthProvider,
     pub role: Role,
     pub disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -51,6 +59,7 @@ impl User {
             auth_provider: self.auth_provider,
             role: self.role,
             disabled: self.disabled,
+            email: self.email.clone(),
             created_at: self.created_at,
         }
     }
@@ -102,7 +111,8 @@ pub struct FileEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum EntryKind {
-    Directory(Directory),
+    /// 命名字段使 serde 序列化为 `{"kind":"directory","directory":{...}}`（与前端 Entry 类型一致）。
+    Directory { directory: Directory },
     File(FileEntry),
 }
 
@@ -112,4 +122,38 @@ pub struct FileLock {
     pub locked_by: Uuid,
     pub locked_by_name: String,
     pub locked_at: DateTime<Utc>,
+}
+
+/// 分享记录（文件或目录）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Share {
+    pub id: Uuid,
+    pub token: String,
+    /// "file" | "directory"
+    pub resource_type: String,
+    pub resource_id: Uuid,
+    pub password_hash: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    /// None = 不限
+    pub max_downloads: Option<i32>,
+    pub download_count: i32,
+    pub access_count: i32,
+    pub preview_only: bool,
+    pub revoked: bool,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 目录网站发布记录。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishedDir {
+    pub id: Uuid,
+    pub directory_id: Uuid,
+    pub publish_id: String,
+    pub enabled: bool,
+    /// "anon" | "login" | "preview_only"
+    pub policy: String,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }

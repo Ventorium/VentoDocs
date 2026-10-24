@@ -190,24 +190,28 @@ grants(
 -- 分享链接
 shares(
   id uuid PK,
-  resource_type text NOT NULL CHECK (resource_type IN ('file','dir')),
-  resource_id uuid NOT NULL,
   token text NOT NULL UNIQUE,          -- 256bit 随机，base62，不可猜测
-  password_hash text NULL,
-  expires_at timestamptz NULL,
+  shareable_type text NOT NULL CHECK (shareable_type IN ('file','directory')),
+  shareable_id uuid NOT NULL,          -- 文件或目录的 id
+  created_by uuid REFERENCES users,
+  password_hash text NULL,             -- argon2id
+  expires_at timestamptz NULL,         -- NULL = 永久
   max_downloads int NULL,              -- NULL = 不限
-  used_downloads int NOT NULL DEFAULT 0,
+  download_count int NOT NULL DEFAULT 0,
   preview_only bool NOT NULL DEFAULT false,
   revoked bool NOT NULL DEFAULT false,
-  created_by uuid REFERENCES users,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  access_count int NOT NULL DEFAULT 0
 )
+CREATE INDEX ON shares (shareable_type, shareable_id);
 
--- 目录网站发布（标识持久，复启复用）
+-- 目录网站发布（publish_id 持久，复启复用）
 published_dirs(
-  directory_id uuid PK REFERENCES directories,
-  publish_id char(16) NOT NULL UNIQUE, -- [a-z2-9] 16 位，CSPRNG
+  id uuid PK,
+  directory_id uuid NOT NULL UNIQUE REFERENCES directories ON DELETE CASCADE,
+  publish_id text NOT NULL UNIQUE,     -- [a-z2-9] 16 位，CSPRNG
   enabled bool NOT NULL DEFAULT true,
+  policy text NOT NULL DEFAULT 'anon' CHECK (policy IN ('anon','login','preview_only')),
   created_by uuid REFERENCES users,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -320,7 +324,8 @@ data/
 - **移动/复制**：移动只改 `path`/`dir_id` 与 `index-view` 路径（索引增量更新路径）；复制生成新 `files` 行、复用同一 content_hash、版本从 1 开始。
 - **重命名**：改 `name` + 索引 upsert。
 - **压缩包**：上传时可选"解压到此目录"（zip/tar.gz，rust 实现，限制递归深度与总大小防 zip bomb）；目录右键"打包下载 zip"（流式）。
-- **排序/筛选**：名称/时间/类型/大小排序，按名称文件名搜索（PG `name` trigram 索引），多条件组合走查询参数。
+- **排序/筛选**：名称/时间/类型/大小排序，多条件组合走查询参数。
+- **文件名搜索（v1）**：`GET /api/v1/search?q=&limit=`（默认 100，上限 200）。命中条件：`name ILIKE '%q%'`（`%`/`_`/`\` 转义，`ESCAPE '\'`）**或** pg_trgm `similarity(name, q) > 0.1`；排序：前缀命中（`name ILIKE 'q%'`）优先 → 相似度降序 → 更新时间降序。返回字段含 `isPrefixMatch`（bool）与 `similarity`（0–1，两位小数），UI「匹配」列展示「前缀」或 `xx%`。可见范围与 §5.3 鉴权完全一致（仅返回有 READ_PREVIEW 的文件，管理员/创建者旁路同 Grants::resolve）。
 
 ## 9. 在线 Office 编辑（Univer OSS）
 
@@ -334,16 +339,31 @@ data/
 ## 10. 分享（§9）
 
 - 对象：单文件或目录。创建时配置：密码（可选，argon2id 哈希存储）、有效期（默认 7 天，可不限）、下载次数（默认不限）、仅预览（可选，默认允许下载——见 §15 决策记录）。
-- token：128bit+ 随机（256bit），base62 编码，**不可枚举**；服务端校验 token → 密码（常时间比对）→ 有效期 → 次数（原子 `UPDATE ... WHERE used_downloads < max` 递增）→ 撤销标志。
+- token：128bit+ 随机（256bit），base62 编码，**不可枚举**；服务端校验 token → 撤销 → 密码（常时间比对）→ 有效期 → 次数（原子 `UPDATE ... WHERE max_downloads IS NULL OR download_count < max_downloads` 递增）。
+- **公开接口状态矩阵**（`/api/v1/public/shares/{token}/*`）：
+
+  | 情形 | meta | verify / entries / preview / download |
+  |---|---|---|
+  | token 不存在 / 已撤销 | 404 `分享链接不存在或已失效` | 404 |
+  | 密码错误 | — | 401 `分享密码错误`（无密码分享时 verify 400） |
+  | 已过期 | 200 + `status:"expired"` | 410 |
+  | 资源已进回收站 | 410 `分享内容已删除` | 410 |
+  | `preview_only` 请求下载 | — | 403 |
+  | 下载次数用尽 | — | 403 |
+  | 路径逃逸分享范围（目录分享） | — | 403 `超出分享范围` |
+  | 文件分享请求 entries | — | 400 |
+
+  密码可走请求体或 `X-Share-Password` 头（头优先）。
+- **meta 字段**：`resourceType`（`file`/`directory`）、`name`、`shareableId`、`passwordProtected`、`expiresAt`、`maxDownloads`、`downloadCount`、`previewOnly`、`status`；仅**文件分享**额外返回 `size` / `updatedAt` / `currentVersion`（目录分享为 `null`），供分享页直接渲染文件元信息。
 - 仅预览分享：只提供预览流接口，下载接口返回 403；预览内容按文件类型渲染（Office 走预览、图片直出、文本直出），**不得**暴露原文件下载接口。
 - 分享访问不授予任何系统权限：分享页是无登录态的独立路由，不产生会话。
 - 每次分享访问写审计（category=share）。
 
 ## 11. 目录网站发布（§10）
 
-- `published_dirs.publish_id`：16 位 `[a-z2-9]`（去掉易混淆字符），CSPRNG 生成，**每目录唯一且持久**；关闭→再开启复用同一 ID（表行保留，只切 `enabled`）。
+- `published_dirs.publish_id`：16 位 `[a-z2-9]`（去掉易混淆字符），CSPRNG 生成，**每目录唯一且持久**；关闭→再开启复用同一 ID（表行保留，只切 `enabled`）。关闭接口**幂等**：重复关闭或关闭未发布目录均返回 200，仅目录本身不存在时 404。
 - 访问域名：`https://<publish_id>.<VIENTO_PUBLISH_DOMAIN>/...`。`VIENTO_PUBLISH_DOMAIN` 环境变量（如 `s.example.com`）；**未配置时发布功能整体禁用**并在 UI 明确提示（不写死域名）。
-- 路由：Axum 按 Host 头匹配 `<publish_id>.<publish_domain>` → 发布目录路由；`enabled=false` 或 ID 不存在 → 立即 410/404（需求：关闭后旧地址立即失效，服务端拒绝，无缓存残留——响应头 `Cache-Control: no-store`）。
+- 路由：Axum 按 Host 头匹配 `<publish_id>.<publish_domain>` → 发布目录路由；`enabled=false` 或 ID 不存在 → 立即 410（`PUBLISH_DISABLED`，服务端拒绝，无缓存残留——响应头 `Cache-Control: no-store`）。
 - 访问控制：默认**匿名可读**该目录树（只读浏览 + 下载受发布策略控制：可配置"需登录/仅预览"）；随机子域名只降低猜测概率，不构成访问控制（需求明确）。
 - 发布的内容范围 = 目录子树当前状态；文件变更后发布内容自动跟随（无快照）。
 - 缓存策略：发布页资源 `no-cache` + ETag；正文按内容 hash 缓存（长 TTL），失效靠 hash 变化自然失效。
@@ -410,7 +430,7 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 
 - 本地用户：email/用户名 + 密码（argon2id），登录签发 JWT（HS256，TTL 默认 24h，`VIENTO_JWT_TTL_HOURS`）；Bearer 头。
 - 管理员：`role='admin'`（两级：超管 + 普通用户，§15.1 定案；"管理员"即超管，负责用户管理与授权）。首个用户经引导流程创建（无用户时 `/api/bootstrap` 可用，创建后永久关闭）。
-- LDAP（§3.2）：管理员触发"从 LDAP 导入"——ldap3 连接（host/port/base_dn/绑定账号/用户过滤器/字段映射均可配），导入用户名/姓名/邮箱到 `users(auth_provider='ldap')`；**LDAP 用户初始不可登录**（系统不存其密码），需管理员为其设本地密码或后续接入 LDAP 绑定登录（二期）；LDAP 删除不联动删除本地用户；LDAP 用户密码修改只改本地，不回写 LDAP；导入不得绕过权限规则（导入即普通用户，无隐式授权）。
+- LDAP（§3.2）：管理员触发"从 LDAP 导入"（`POST /api/v1/admin/ldap/import`，admin 专用，**无请求体**）——ldap3 直连，连接参数（host/port/base_dn/绑定账号/用户过滤器/字段映射）一律走 `VIENTO_LDAP_*` 环境变量（§16），不入库、不入请求体。导入用户名/姓名/邮箱到 `users(auth_provider='ldap')`，角色固定 `user`、**无隐式授权**；**LDAP 用户初始不可本地登录**（系统不存其密码），需管理员设本地密码或后续接入 LDAP 绑定登录（二期）。返回 `{created, skipped, failed}`：已存在同 username → 计入 `skipped` 并 `COALESCE` 同步 name/email；单条失败不影响整批，失败条目记入 `failed: ["{username}: {err}"]`。LDAP 删除不联动删除本地用户；LDAP 用户本地密码修改只改本地，不回写 LDAP。
 - 限流：登录接口按 IP+账号限流（Redis 计数）。
 
 ## 16. 配置（环境变量）
@@ -419,13 +439,21 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 |---|---|---|
 | `VIENTO_DATA_DIR` | `./data` | 对象存储 + 索引视图根 |
 | `VIENTO_DB_URL` | 必填 | PG 连接串 |
-| `VIENTO_REDIS_URL` | 必填 | Redis 连接串 |
+| `VIENTO_REDIS_URL` | 空=禁用（v1 未启用 Redis，v2 会话/队列预留） | Redis 连接串 |
 | `VIENTO_JWT_SECRET` | 必填 | JWT 密钥 |
 | `VIENTO_MAX_UPLOAD_MB` | 500 | 单文件上传上限 |
 | `VIENTO_TRASH_RETENTION_DAYS` | 180 | 回收站保留 |
 | `VIENTO_VERSION_KEEP` | 20 | 每文件保留版本数（超出最旧清理，对象按引用计数） |
 | `VIENTO_AUDIT_RETENTION_DAYS` | 365 | 审计保留 |
 | `VIENTO_PUBLISH_DOMAIN` | 空=禁用发布 | 发布泛域名后缀 |
+| `VIENTO_LDAP_HOST` | 空=禁用 LDAP 导入 | LDAP 服务器地址（§15） |
+| `VIENTO_LDAP_PORT` | `389` | LDAP 端口（`636` 自动 LDAPS） |
+| `VIENTO_LDAP_START_TLS` | `false` | 389 端口启用 StartTLS |
+| `VIENTO_LDAP_BASE_DN` | 空 | 搜索基 DN |
+| `VIENTO_LDAP_BIND_DN` | 空 | 管理员绑定 DN（服务账号） |
+| `VIENTO_LDAP_BIND_PASSWORD` | 空 | 绑定密码（仅存于进程环境） |
+| `VIENTO_LDAP_USER_FILTER` | `(objectClass=inetOrgPerson)` | 用户过滤器 |
+| `VIENTO_LDAP_ATTR_USERNAME/NAME/EMAIL` | `uid`/`cn`/`mail` | 字段映射 |
 | `VIENTO_LLM_BASE_URL/KEY/MODEL` | 空=禁用 Agent | OpenAI 兼容 |
 | `VIENTO_ZVEC_EMBEDDING` | 引擎默认本地模型 | 可指定模型标识 |
 | `VIENTO_BIND_ADDR` | `0.0.0.0:8080` | 监听地址 |

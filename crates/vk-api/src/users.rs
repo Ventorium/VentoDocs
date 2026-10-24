@@ -28,6 +28,8 @@ pub struct CreateUserReq {
     pub password: String,
     #[serde(default)]
     pub role: Option<Role>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -102,6 +104,7 @@ pub async fn create(
         display,
         &body.password,
         role,
+        body.email.as_deref(),
     )
     .await?;
     Audit::log(
@@ -193,67 +196,57 @@ pub async fn set_password(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// LDAP 单向导入：逐行创建/跳过，不写回密码、不可本地登录（需求 §用户管理）。
-#[derive(Deserialize)]
-pub struct LdapImportRow {
-    pub username: String,
-    pub display_name: Option<String>,
+/// LDAP 配置只读信息（不含凭据；凭据仅存环境变量，需求 §17）。
+pub async fn ldap_config(
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&user)?;
+    let cfg = vk_store::repo::ldap::LdapConfig::from_env()
+        .ok_or_else(|| ApiError::bad_request("LDAP 未配置（VIENTO_LDAP_HOST 等环境变量）"))?;
+    Ok(Json(cfg.public_info()))
 }
 
-#[derive(Deserialize)]
-pub struct LdapImportReq {
-    pub users: Vec<LdapImportRow>,
-}
-
+/// LDAP 单向导入：管理员触发，直连 LDAP 搜索用户并写入本地（需求 §15）。
+/// 已存在用户名 → 跳过（仅同步显示名/邮箱/DN，不碰密码/角色/禁用）；
+/// 新用户名 → 创建 ldap 账号（不可本地登录）；失败逐条记入 failed。
 #[derive(Serialize)]
 pub struct LdapImportResult {
-    pub created: Vec<String>,
-    pub skipped: Vec<String>,
+    pub created: u32,
+    pub skipped: u32,
     pub failed: Vec<String>,
 }
 
 pub async fn import_ldap(
     State(state): State<AppState>,
     axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
-    Json(body): Json<LdapImportReq>,
 ) -> Result<Json<LdapImportResult>, ApiError> {
     require_admin(&user)?;
-    let pool = state.db.pool();
-    let mut res = LdapImportResult {
-        created: vec![],
-        skipped: vec![],
-        failed: vec![],
+    let cfg = vk_store::repo::ldap::LdapConfig::from_env()
+        .ok_or_else(|| ApiError::bad_request("LDAP 未配置（VIENTO_LDAP_HOST 等环境变量）"))?;
+    let res = vk_store::repo::ldap::import_to_db(&state.db, &cfg)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let out = LdapImportResult {
+        created: res.imported,
+        skipped: res.skipped,
+        failed: res.failed,
     };
-    for row in &body.users {
-        if row.username.trim().is_empty() {
-            res.failed.push("<空用户名>".into());
-            continue;
-        }
-        let exists = Users::get_by_username(pool, &row.username).await?.is_some();
-        if exists {
-            res.skipped.push(row.username.clone());
-            continue;
-        }
-        let display = row.display_name.as_deref().unwrap_or(&row.username);
-        match Users::create_ldap(pool, &row.username, display).await {
-            Ok(u) => {
-                Audit::log(
-                    pool,
-                    Some(user.id),
-                    "admin",
-                    "ldap_import",
-                    Some("user"),
-                    Some(&u.id.to_string()),
-                    serde_json::json!({}),
-                    None,
-                )
-                .await?;
-                res.created.push(row.username.clone());
-            }
-            Err(e) => res.failed.push(format!("{}: {e}", row.username)),
-        }
-    }
-    Ok(Json(res))
+    Audit::log(
+        state.db.pool(),
+        Some(user.id),
+        "admin",
+        "ldap_import",
+        None,
+        None,
+        serde_json::json!({
+            "created": out.created,
+            "skipped": out.skipped,
+            "failed": out.failed.len(),
+        }),
+        None,
+    )
+    .await?;
+    Ok(Json(out))
 }
 
 #[derive(Debug, Deserialize, Default)]

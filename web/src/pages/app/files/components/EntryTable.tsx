@@ -7,6 +7,8 @@ import RenameModal from '@/components/RenameModal'
 import VersionsDrawer from '@/components/VersionsDrawer'
 import MoveCopyModal from './MoveCopyModal'
 import GrantsModal from './GrantsModal'
+import ShareModal from './ShareModal'
+import PublishModal from './PublishModal'
 import { useEntryActions } from './useEntryActions'
 import { formatBytes, formatTime } from '@/lib/format'
 import type { AuthUser } from '@/store/useAuth'
@@ -44,11 +46,18 @@ const EntryTable = ({ page, me, onReload }: EntryTableProps) => {
         dataSource={page.children}
         pagination={false}
         onRow={(r) => ({
-          onClick: () => {
-            if (r.kind === 'file') navigate(`/app/file/${r.file.id}`)
+          // 仅当点击目标在行内 DOM 中才导航：行内弹层（Dropdown 菜单 / Popconfirm /
+          // Select 等）挂载在 body 级 portal，其 React 合成事件会沿组件树冒泡到 <tr>，
+          // 但原生 target 不在行内，据此区分，避免点菜单项误触发整行跳转。
+          onClick: (e) => {
+            if (e.currentTarget.contains(e.target as Node) && r.kind === 'file') {
+              navigate(`/app/file/${r.file.id}`)
+            }
           },
-          onDoubleClick: () => {
-            if (r.kind === 'directory') navigate(`/app/files/${r.directory.id}`)
+          onDoubleClick: (e) => {
+            if (e.currentTarget.contains(e.target as Node) && r.kind === 'directory') {
+              navigate(`/app/files/${r.directory.id}`)
+            }
           },
           style: { cursor: 'pointer' },
         })}
@@ -167,6 +176,23 @@ const EntryTable = ({ page, me, onReload }: EntryTableProps) => {
       )}
       {modal?.type === 'grants' && (
         <GrantsModal open dirId={modal.dir.id} dirName={modal.dir.name} onClose={close} />
+      )}
+      {modal?.type === 'share' && (
+        <ShareModal
+          open
+          resourceType={modal.entry.kind === 'file' ? 'file' : 'directory'}
+          resourceId={modal.entry.kind === 'file' ? modal.entry.file.id : modal.entry.directory.id}
+          resourceName={entryName(modal.entry)}
+          onClose={close}
+        />
+      )}
+      {modal?.type === 'publish' && (
+        <PublishModal
+          open
+          dirId={modal.entry.directory.id}
+          dirName={modal.entry.directory.name}
+          onClose={close}
+        />
       )}
     </>
   )

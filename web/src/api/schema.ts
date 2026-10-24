@@ -133,15 +133,151 @@ export type AuditEntry = {
   ip: string | null
 }
 
-export type LdapImportRow = {
-  username: string
-  display_name?: string
+/** LDAP 连接配置摘要（GET /users/ldap/config，不含密码）。 */
+export type LdapConfigInfo = {
+  host: string
+  port: number
+  startTls: boolean
+  baseDn: string
+  userFilter: string
+  attrUsername: string
+  attrName: string
+  attrEmail: string
 }
 
+/** LDAP 导入结果（POST /users/ldap/import，无请求体）。 */
 export type LdapImportResult = {
-  created: string[]
-  skipped: string[]
+  created: number
+  skipped: number
   failed: string[]
+}
+
+// ---------------- M3：分享 ----------------
+
+export type ShareResourceType = 'file' | 'directory'
+
+/** 分享记录（后端已剥离 password_hash，补 has_password 视图字段）。 */
+export type Share = {
+  id: string
+  token: string
+  resource_type: ShareResourceType
+  resource_id: string
+  has_password: boolean
+  /** ISO 时间；null = 永久有效 */
+  expires_at: string | null
+  /** null = 不限下载次数 */
+  max_downloads: number | null
+  download_count: number
+  access_count: number
+  preview_only: boolean
+  revoked: boolean
+  created_by: string | null
+  created_at: string
+}
+
+export type ShareCreateReq = {
+  resource_type: ShareResourceType
+  resource_id: string
+  /** 空/省略 = 不设密码 */
+  password?: string | null
+  /** 省略字段 = 默认 7 天；null = 永久有效；n = n 天（1–3650） */
+  expires_in_days?: number | null
+  /** null/省略 = 不限；n ≥ 1 */
+  max_downloads?: number | null
+  preview_only?: boolean
+}
+
+export type ShareOut = {
+  share: Share
+  url: string
+}
+
+export type ShareListOut = {
+  shares: Share[]
+}
+
+/** 公开分享元信息（camelCase，未鉴权）。 */
+export type PublicShareMeta = {
+  resourceType: ShareResourceType
+  resourceId: string
+  name: string
+  hasPassword: boolean
+  /** 过期但链接仍可达时返回 expired（meta 不 410） */
+  status: 'ok' | 'expired'
+  previewOnly: boolean
+  expiresAt: string | null
+  maxDownloads: number | null
+  downloadCount: number
+  /** 仅文件分享返回；目录分享为 null */
+  size: number | null
+  updatedAt: string | null
+  currentVersion: number | null
+}
+
+// ---------------- M3：目录网站发布 ----------------
+
+export type PublishPolicy = 'anon' | 'login' | 'preview_only'
+
+export type PublishedDir = {
+  id: string
+  directory_id: string
+  publish_id: string
+  enabled: boolean
+  policy: PublishPolicy
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** POST /directories/{id}/publish 启用响应。 */
+export type PublishOut = {
+  publish: PublishedDir
+  /** 配置了 VIENTO_PUBLISH_DOMAIN 时为 https://{publish_id}.{domain}/，否则 null */
+  url: string | null
+}
+
+/** GET /directories/{id}/publish 查询响应（从未发布时 publish 为 null）。 */
+export type PublishGetOut = {
+  publish: PublishedDir | null
+  url: string | null
+}
+
+export type PublishEnableReq = {
+  policy: PublishPolicy
+}
+
+/** 公开站点元信息（camelCase，未鉴权；login 策略需 Bearer JWT）。 */
+export type PublicPublishMeta = {
+  name: string
+  publishId: string
+  policy: PublishPolicy
+  directoryId: string
+}
+
+/** 公开站点条目（与目录页 Entry 同形，但文件项无 lock）。 */
+export type PublicEntry =
+  | { kind: 'directory'; directory: Directory }
+  | { kind: 'file'; file: FileMeta }
+
+// ---------------- M3：文件名搜索 ----------------
+
+export type SearchQuery = {
+  q: string
+  limit?: number
+}
+
+export type SearchHit = {
+  /** 所属目录面包屑路径（" / " 连接，根目录显示"根目录"） */
+  directoryPath: string
+  id: string
+  /** 是否文件名前缀匹配（排序优先级高于相似度） */
+  isPrefixMatch: boolean
+  mime: string
+  name: string
+  /** pg_trgm 相似度，0–1 原始浮点（前缀命中且无相似计算时可为 0） */
+  similarity: number
+  size: number
+  updatedAt: string
 }
 
 export type LoginResp = {
@@ -189,10 +325,6 @@ export type UpdateUserReq = {
 
 export type SetPasswordReq = {
   password: string
-}
-
-export type LdapImportReq = {
-  users: LdapImportRow[]
 }
 
 export type CreateTeamReq = {
@@ -295,13 +427,18 @@ export type OpenAPIs = {
     // 二进制内容：客户端不解析非 JSON，实际经 raw fetch 下载，见 api/index.ts 的 fetchFileContent。
     '/api/v1/files/{id}/content': { query: any; params: IdParams; body: any; headers: any; response: Response }
     '/api/v1/files/{id}/univer-preview': { query: any; params: IdParams; body: any; headers: any; response: UniverPreviewResp }
+    '/api/v1/shares': { query: { resource_type: string; resource_id: string }; params: any; body: any; headers: any; response: ShareListOut }
+    '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: PublishGetOut }
+    '/api/v1/search': { query: SearchQuery; params: any; body: any; headers: any; response: SearchHit[] }
+    '/api/v1/users/ldap/config': { query: any; params: any; body: any; headers: any; response: LdapConfigInfo }
   }
   post: {
     '/api/v1/auth/bootstrap': { query: any; params: any; body: BootstrapReq; headers: any; response: LoginResp }
     '/api/v1/auth/login': { query: any; params: any; body: LoginReq; headers: any; response: LoginResp }
     '/api/v1/users': { query: any; params: any; body: CreateUserReq; headers: any; response: User }
     '/api/v1/users/{id}/password': { query: any; params: IdParams; body: SetPasswordReq; headers: any; response: OkResp }
-    '/api/v1/users/ldap/import': { query: any; params: any; body: LdapImportReq; headers: any; response: LdapImportResult }
+    // LDAP 导入无请求体（配置全部来自服务端环境变量）
+    '/api/v1/users/ldap/import': { query: any; params: any; body: any; headers: any; response: LdapImportResult }
     '/api/v1/teams': { query: any; params: any; body: CreateTeamReq; headers: any; response: Team }
     '/api/v1/teams/{team_id}/members': { query: any; params: TeamIdParams; body: AddMemberReq; headers: any; response: Team }
     '/api/v1/directories': { query: any; params: any; body: CreateDirReq; headers: any; response: Directory }
@@ -319,6 +456,9 @@ export type OpenAPIs = {
     '/api/v1/files/{id}/move': { query: any; params: IdParams; body: MoveFileReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/copy': { query: any; params: IdParams; body: CopyFileReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/rename': { query: any; params: IdParams; body: RenameFileReq; headers: any; response: FileMeta }
+    '/api/v1/shares': { query: any; params: any; body: ShareCreateReq; headers: any; response: ShareOut }
+    '/api/v1/shares/{id}/revoke': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
+    '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: PublishEnableReq; headers: any; response: PublishOut }
   }
   put: {
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: SetGrantReq; headers: any; response: { ok: boolean; perms: number } }
@@ -334,5 +474,6 @@ export type OpenAPIs = {
     '/api/v1/directories/{id}/grants/{ptype}/{pid}': { query: any; params: GrantParams; body: any; headers: any; response: OkResp }
     '/api/v1/files/{id}': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/files/{id}/purge': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
+    '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
   }
 }

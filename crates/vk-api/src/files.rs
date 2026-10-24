@@ -24,6 +24,7 @@ use vk_store::repo::audit::Audit;
 use vk_store::repo::directories::Directories;
 use vk_store::repo::files::{Files, VersionInfo};
 use vk_store::repo::grants::Grants;
+use vk_store::repo::shares::Shares;
 use vk_store::repo::users::Users;
 
 use crate::AppState;
@@ -376,7 +377,7 @@ pub async fn content(
 const MAX_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
 
 /// 取文件名小写扩展名。
-fn ext_of(name: &str) -> String {
+pub(super) fn ext_of(name: &str) -> String {
     std::path::Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
@@ -423,6 +424,100 @@ async fn univer_content_response(
         .header(header::CONTENT_LENGTH, bytes.len().to_string())
         .body(Body::from(bytes))
         .map_err(|e| ApiError::internal(format!("构造响应失败：{e}")))
+}
+
+/// 当前版本内容交付（不做权限校验，供分享/发布公开端点调用，调用方自行校验范围）。
+pub(super) async fn deliver_current(
+    state: &AppState,
+    file: &FileMeta,
+    download: bool,
+) -> Result<Response, ApiError> {
+    let pool = state.db.pool();
+    let (sha, encoding) = Files::current_ref(pool, file.id).await?;
+    if encoding == "univer" {
+        return univer_content_response(state, file, &sha, download).await;
+    }
+    let obj = state
+        .objects
+        .open(&sha)
+        .await
+        .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+    let len = obj
+        .metadata()
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件元数据失败：{e}")))?
+        .len();
+    Response::builder()
+        .header(header::CONTENT_TYPE, file.mime.clone())
+        .header(
+            header::CONTENT_DISPOSITION,
+            content_disposition(&file.name, download),
+        )
+        .header(header::CONTENT_LENGTH, len.to_string())
+        .body(Body::from_stream(file_stream(obj)))
+        .map_err(|e| ApiError::internal(format!("构造响应失败：{e}")))
+}
+
+/// 当前版本 Univer 只读预览（不做权限校验，供公开端点调用）。
+pub(super) async fn preview_current(
+    state: &AppState,
+    file: &FileMeta,
+) -> Result<serde_json::Value, ApiError> {
+    let pool = state.db.pool();
+    let (sha, encoding) = Files::current_ref(pool, file.id).await?;
+    let mut obj = state
+        .objects
+        .open(&sha)
+        .await
+        .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+    let len = obj
+        .metadata()
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件元数据失败：{e}")))?
+        .len();
+    if len > MAX_PREVIEW_BYTES {
+        return Err(ApiError::preview_too_large());
+    }
+    let mut buf = Vec::with_capacity(len as usize);
+    obj.read_to_end(&mut buf)
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件失败：{e}")))?;
+
+    if encoding == "univer" {
+        let snap: serde_json::Value =
+            serde_json::from_slice(&buf).map_err(|_| ApiError::internal("文件数据已损坏，无法解析"))?;
+        let unit = if ext_of(&file.name) == "docx" {
+            "doc"
+        } else {
+            "sheet"
+        };
+        return Ok(serde_json::json!({
+            "unitType": unit,
+            "snapshot": snap,
+            "fileVersion": file.current_version,
+        }));
+    }
+
+    let ext = ext_of(&file.name);
+    if !vk_convert::is_supported(&ext) {
+        return Err(ApiError::bad_request(
+            "该文件类型暂不支持在线预览，请下载后查看",
+        ));
+    }
+    let snap = vk_convert::convert(&buf, &ext, &file.name).map_err(|e| match e {
+        vk_convert::ConvertError::UnsupportedFormat => {
+            ApiError::bad_request("该文件类型暂不支持在线预览，请下载后查看")
+        }
+        vk_convert::ConvertError::TooLarge => ApiError::preview_too_large(),
+        vk_convert::ConvertError::Parse(detail) => {
+            ApiError::bad_request(format!("文件解析失败：{detail}"))
+        }
+    })?;
+    Ok(serde_json::json!({
+        "unitType": snap.unit_type,
+        "snapshot": snap.snapshot,
+        "fileVersion": file.current_version,
+    }))
 }
 
 /// Univer 在线预览：服务端 Rust 转换 Office/CSV → Univer 快照 JSON（M2.1 只读）。
@@ -808,6 +903,10 @@ pub async fn purge(
     let pool = state.db.pool();
     require_file_perm(pool, &user, id, Perm::DELETE_RESTORE).await?;
     Files::purge(pool, id).await?;
+    // 尽力撤销该文件的全部分享（失败仅记录，不影响 purge 结果）
+    if let Err(e) = Shares::revoke_for_resource(pool, "file", id).await {
+        tracing::warn!("purge 后撤销分享失败 file={id}: {e}");
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

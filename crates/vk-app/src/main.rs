@@ -95,7 +95,12 @@ async fn main() -> anyhow::Result<()> {
         objects,
         cfg: Arc::new(cfg),
     };
-    let app = vk_api::router(state).merge(static_files());
+    let app = vk_api::router(state.clone()).merge(static_files());
+    // 发布子域名路由（§11）：{publish_id}.{VIENTO_PUBLISH_DOMAIN}
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        host_publish_route,
+    ));
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     info!(addr = %cli.bind, "VentoKnowledge 已启动");
@@ -149,4 +154,99 @@ fn static_files() -> axum::Router {
         .route("/", get(index_route))
         .route("/{*path}", get(static_or_index))
         .with_state(index)
+}
+
+/// 发布子域名 410 响应体（禁止缓存，§11）。
+const GONE_BODY: &str = r#"{"error":{"code":"GONE","message":"发布站点不存在或已停用"}}"#;
+
+fn gone_response() -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(axum::http::StatusCode::GONE)
+        .header(axum::http::header::CACHE_CONTROL, "no-store")
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(GONE_BODY.to_string()))
+        .unwrap_or_default()
+}
+
+async fn run_next(
+    next: axum::middleware::Next,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    next.run(req).await
+}
+
+/// 发布子域名路由（§11）：Host = `{publish_id}.{VIENTO_PUBLISH_DOMAIN}`。
+///
+/// - 站点已启用 → 页面路径重写为 `/p/{publish_id}{原路径}`；`/api/`、`/assets/`、
+///   `/_env` 原样放行（公开 API 与静态资源在任意主机头下均可用）。
+/// - 站点不存在 / 停用 / 目录已删除 → 整站 410 + `Cache-Control: no-store`。
+/// - 未配置域名或非 `{pid}.{domain}` 主机头 → 直接放行。
+async fn host_publish_route(
+    axum::extract::State(state): axum::extract::State<vk_api::AppState>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let Some(domain) = state
+        .cfg
+        .publish_domain
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+    else {
+        return run_next(next, req).await;
+    };
+    let Some(host) = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return run_next(next, req).await;
+    };
+    let host = host
+        .split_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(host)
+        .trim()
+        .to_lowercase();
+    let Some(pid) = host.strip_suffix(&format!(".{domain}")) else {
+        return run_next(next, req).await;
+    };
+    // publish_id 形如 16 位 [a-z2-9]；形都不像则不视为发布站点
+    if pid.len() != 16
+        || !pid
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || (b'2'..=b'9').contains(&b))
+    {
+        return run_next(next, req).await;
+    }
+    let w = match vk_store::repo::publishes::Publishes::get_by_publish_id(state.db.pool(), pid).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!(error = %e, "发布站点查询失败");
+            return run_next(next, req).await;
+        }
+    };
+    let Some(w) = w else {
+        return gone_response();
+    };
+    if !w.publish.enabled || w.directory.deleted_at.is_some() {
+        return gone_response();
+    }
+    // 页面路径重写；API/静态资源/环境信息原样放行
+    let old = req.uri().clone();
+    let path = old.path().to_string();
+    if !path.starts_with("/api/") && !path.starts_with("/assets/") && path != "/_env" {
+        let pq = match old.query() {
+            Some(q) => format!("/p/{pid}{path}?{q}"),
+            None => format!("/p/{pid}{path}"),
+        };
+        if let Ok(pq) = axum::http::uri::PathAndQuery::from_maybe_shared(pq) {
+            let mut parts = old.into_parts();
+            parts.path_and_query = Some(pq);
+            if let Ok(uri) = axum::http::uri::Uri::from_parts(parts) {
+                *req.uri_mut() = uri;
+            }
+        }
+    }
+    run_next(next, req).await
 }

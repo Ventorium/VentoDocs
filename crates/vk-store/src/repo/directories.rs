@@ -120,7 +120,7 @@ impl Directories {
 
         let mut children = Vec::new();
         for d in &dirs {
-            children.push(EntryKind::Directory(to_dir(d)));
+            children.push(EntryKind::Directory { directory: to_dir(d) });
         }
         for f in files {
             let lock = match (f.8, f.9, f.10) {

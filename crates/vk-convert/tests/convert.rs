@@ -16,7 +16,10 @@ fn sample(name: &str) -> Vec<u8> {
 }
 
 fn univer_sample(name: &str) -> Value {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../poc/univer/samples/univer/");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../poc/univer/samples/univer/"
+    );
     let full = format!("{path}{name}");
     let s = std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("读取 {full} 失败：{e}"));
     serde_json::from_str(&s).unwrap()
@@ -41,7 +44,15 @@ fn xlsx_matches_sample_shape() {
     let wb = &snap.snapshot;
 
     // 顶层字段
-    for key in ["id", "name", "appVersion", "locale", "styles", "sheetOrder", "sheets"] {
+    for key in [
+        "id",
+        "name",
+        "appVersion",
+        "locale",
+        "styles",
+        "sheetOrder",
+        "sheets",
+    ] {
         assert!(wb.get(key).is_some(), "缺少顶层字段 {key}");
     }
     assert_eq!(wb["locale"], "zhCN");
@@ -83,7 +94,10 @@ fn xlsx_matches_sample_shape() {
 
         // 表级字段
         assert_eq!(my_s["name"], name.as_str());
-        assert_eq!(my_s["rowCount"], ref_s["rowCount"], "{name} rowCount 不一致");
+        assert_eq!(
+            my_s["rowCount"], ref_s["rowCount"],
+            "{name} rowCount 不一致"
+        );
         assert_eq!(
             my_s["columnCount"], ref_s["columnCount"],
             "{name} columnCount 不一致"
@@ -120,10 +134,7 @@ fn xlsx_matches_sample_shape() {
                         );
                     }
                     Some(1) | Some(3) => {
-                        assert_eq!(
-                            my_cell["v"], ref_cell["v"],
-                            "值不一致 {name} [{r},{c}]"
-                        );
+                        assert_eq!(my_cell["v"], ref_cell["v"], "值不一致 {name} [{r},{c}]");
                     }
                     _ => {
                         assert_eq!(my_cell["v"], ref_cell["v"], "值不一致 {name} [{r},{c}]");
@@ -164,17 +175,13 @@ fn xlsx_matches_sample_shape() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|m| {
-                json!([m["startRow"], m["startColumn"], m["endRow"], m["endColumn"]])
-            })
+            .map(|m| json!([m["startRow"], m["startColumn"], m["endRow"], m["endColumn"]]))
             .collect();
         let mut my_merges: Vec<Value> = my_s["mergeData"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|m| {
-                json!([m["startRow"], m["startColumn"], m["endRow"], m["endColumn"]])
-            })
+            .map(|m| json!([m["startRow"], m["startColumn"], m["endRow"], m["endColumn"]]))
             .collect();
         ref_merges.sort_by_key(|v| v.to_string());
         my_merges.sort_by_key(|v| v.to_string());
@@ -202,17 +209,22 @@ fn docx_matches_sample_shape() {
     let ref_doc = univer_sample("doc-sample.json");
 
     // 顶层字段
-    for key in ["id", "title", "documentStyle", "styles", "lists", "body", "tableSource"] {
+    for key in [
+        "id",
+        "title",
+        "documentStyle",
+        "styles",
+        "lists",
+        "body",
+        "tableSource",
+    ] {
         assert!(doc.get(key).is_some(), "缺少顶层字段 {key}");
     }
     assert_eq!(doc["title"], "sample.docx");
 
     let ds = doc["body"]["dataStream"].as_str().unwrap().to_string();
     let ref_ds = ref_doc["body"]["dataStream"].as_str().unwrap().to_string();
-    assert!(
-        ds.ends_with('\0'),
-        "dataStream 必须以 \\0 结尾"
-    );
+    assert!(ds.ends_with('\0'), "dataStream 必须以 \\0 结尾");
     assert_eq!(
         ds.len(),
         ref_ds.len(),
@@ -227,11 +239,17 @@ fn docx_matches_sample_shape() {
     assert_eq!(my_tables.len(), ref_tables.len(), "表格数量不一致");
     for (i, t) in ref_tables.iter().enumerate() {
         let my = &my_tables[i];
-        assert_eq!(my["startIndex"], t["startIndex"], "表格 {i} startIndex 不一致");
+        assert_eq!(
+            my["startIndex"], t["startIndex"],
+            "表格 {i} startIndex 不一致"
+        );
         assert_eq!(my["endIndex"], t["endIndex"], "表格 {i} endIndex 不一致");
         let tid = t["tableId"].as_str().unwrap();
         assert_eq!(my["tableId"], tid);
-        assert!(doc["tableSource"].get(tid).is_some(), "缺少 tableSource[{tid}]");
+        assert!(
+            doc["tableSource"].get(tid).is_some(),
+            "缺少 tableSource[{tid}]"
+        );
     }
     // 哨兵字符
     assert_eq!(ds.chars().nth(156), Some('\r'), "表格前段落结束应为 \\r");
@@ -247,11 +265,7 @@ fn docx_matches_sample_shape() {
         "段落数量应为 18，实际 {}",
         my_paras.len()
     );
-    assert_eq!(
-        my_paras.len(),
-        ref_paras.len(),
-        "段落数量与 ref 不一致"
-    );
+    assert_eq!(my_paras.len(), ref_paras.len(), "段落数量与 ref 不一致");
     for (i, (rp, mp)) in ref_paras.iter().zip(my_paras.iter()).enumerate() {
         assert_eq!(
             mp["startIndex"], rp["startIndex"],
@@ -266,7 +280,9 @@ fn docx_matches_sample_shape() {
             );
         } else {
             assert!(
-                mp.get("paragraphStyle").and_then(|p| p.get("headingId")).is_none(),
+                mp.get("paragraphStyle")
+                    .and_then(|p| p.get("headingId"))
+                    .is_none(),
                 "段落 {i} 不应有 headingId"
             );
         }
@@ -274,7 +290,10 @@ fn docx_matches_sample_shape() {
             let mb = mp
                 .get("bullet")
                 .unwrap_or_else(|| panic!("段落 {i} 缺少 bullet"));
-            assert_eq!(mb["nestingLevel"], rb["nestingLevel"], "段落 {i} nestingLevel");
+            assert_eq!(
+                mb["nestingLevel"], rb["nestingLevel"],
+                "段落 {i} nestingLevel"
+            );
             // POC 对列表硬编码 list-1；Rust 侧解析真实 numId（ListNumber→5, ListBullet→1）。
             // 只要求 listType 存在于 lists 声明中且 listId 非 0。
             let lt = mb["listType"].as_str().unwrap();
@@ -349,7 +368,11 @@ fn docx_matches_sample_shape() {
     //   样例 lvlText 为 Wingdings PUA \u{f0b7}，归一为 "●"。
     // - 有序列表（ListNumber → numId 5）：glyphType = ListGlyphType::DECIMAL (2) + startNumber。
     let list1 = &doc["lists"]["list-1"]["nestingLevel"][0];
-    assert_eq!(list1["glyphSymbol"], json!("●"), "list-1 应为 glyphSymbol 项目符号");
+    assert_eq!(
+        list1["glyphSymbol"],
+        json!("●"),
+        "list-1 应为 glyphSymbol 项目符号"
+    );
     assert!(
         list1.get("glyphType").is_none(),
         "项目符号列表不应携带 glyphType"
@@ -376,8 +399,7 @@ fn docx_matches_sample_shape() {
 
 #[test]
 fn csv_basic() {
-    let bytes = "姓名,年龄,备注\n张三,30,\"含,逗号\"\n李四,25,普通\n"
-        .as_bytes();
+    let bytes = "姓名,年龄,备注\n张三,30,\"含,逗号\"\n李四,25,普通\n".as_bytes();
     let snap = convert(bytes, "csv", "数据.csv").unwrap();
     let wb = &snap.snapshot;
     let sheet = &wb["sheets"][wb["sheetOrder"][0].as_str().unwrap()];
@@ -399,17 +421,15 @@ fn csv_bom_and_gbk() {
     // UTF-8 BOM
     let bytes = vec![0xEF, 0xBB, 0xBF, b'a', b',', b'b', b'\n', b'1', b',', b'2'];
     let snap = convert(&bytes, "csv", "bom.csv").unwrap();
-    let cells = &snap.snapshot["sheets"][snap.snapshot["sheetOrder"][0]
-        .as_str()
-        .unwrap()]["cellData"];
+    let cells =
+        &snap.snapshot["sheets"][snap.snapshot["sheetOrder"][0].as_str().unwrap()]["cellData"];
     assert_eq!(cells["0"]["0"]["v"], "a");
 
     // GB18030：中文「中文」= D6 D0 CE C4
     let bytes: Vec<u8> = [b'x', b',', 0xD6, 0xD0, 0xCE, 0xC4, b'\n'].to_vec();
     let snap = convert(&bytes, "csv", "gbk.csv").unwrap();
-    let cells = &snap.snapshot["sheets"][snap.snapshot["sheetOrder"][0]
-        .as_str()
-        .unwrap()]["cellData"];
+    let cells =
+        &snap.snapshot["sheets"][snap.snapshot["sheetOrder"][0].as_str().unwrap()]["cellData"];
     assert_eq!(cells["0"]["0"]["v"], "x");
     assert_eq!(cells["0"]["1"]["v"], "中文");
 }

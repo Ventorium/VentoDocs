@@ -7,7 +7,7 @@ use uuid::Uuid;
 use vk_core::model::{AuthProvider, Role, User};
 
 const USER_SELECT: &str =
-    "id, username, display_name, password_hash, auth_provider, role, disabled, created_at";
+    "id, username, display_name, password_hash, auth_provider, role, disabled, email, ldap_dn, last_login_at, created_at";
 
 fn map_provider(s: &str) -> AuthProvider {
     match s {
@@ -37,6 +37,9 @@ struct UserRow {
     auth_provider: String,
     role: String,
     disabled: bool,
+    email: Option<String>,
+    ldap_dn: Option<String>,
+    last_login_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
 }
 
@@ -49,6 +52,9 @@ fn to_user(r: UserRow) -> User {
         auth_provider: map_provider(&r.auth_provider),
         role: map_role(&r.role),
         disabled: r.disabled,
+        email: r.email,
+        ldap_dn: r.ldap_dn,
+        last_login_at: r.last_login_at,
         created_at: r.created_at,
     }
 }
@@ -93,25 +99,27 @@ impl Users {
         Ok(rows.into_iter().map(to_user).collect())
     }
 
-    /// 创建本地用户（argon2id 哈希密码）。
+    /// 创建本地用户（argon2id 哈希密码）。email 可选。
     pub async fn create(
         pool: &PgPool,
         username: &str,
         display_name: &str,
         password: &str,
         role: Role,
+        email: Option<&str>,
     ) -> Result<User> {
         let hash = hash_password(password)?;
         let id = Uuid::now_v7();
         sqlx::query(
-            "INSERT INTO users (id, username, display_name, password_hash, auth_provider, role)
-             VALUES ($1, $2, $3, $4, 'local', $5)",
+            "INSERT INTO users (id, username, display_name, password_hash, auth_provider, role, email)
+             VALUES ($1, $2, $3, $4, 'local', $5, $6)",
         )
         .bind(id)
         .bind(username)
         .bind(display_name)
         .bind(&hash)
         .bind(role_str(role))
+        .bind(email)
         .execute(pool)
         .await
         .map_err(|e| match e {
@@ -123,16 +131,24 @@ impl Users {
         Self::get_by_id(pool, id).await
     }
 
-    /// 创建 LDAP 导入用户（无本地密码，不可本地登录）。
-    pub async fn create_ldap(pool: &PgPool, username: &str, display_name: &str) -> Result<User> {
+    /// 创建 LDAP 导入用户（无本地密码，不可本地登录；保存 email/ldap_dn 溯源）。
+    pub async fn create_ldap(
+        pool: &PgPool,
+        username: &str,
+        display_name: &str,
+        email: Option<&str>,
+        ldap_dn: Option<&str>,
+    ) -> Result<User> {
         let id = Uuid::now_v7();
         sqlx::query(
-            "INSERT INTO users (id, username, display_name, auth_provider, role)
-             VALUES ($1, $2, $3, 'ldap', 'user')",
+            "INSERT INTO users (id, username, display_name, auth_provider, role, email, ldap_dn)
+             VALUES ($1, $2, $3, 'ldap', 'user', $4, $5)",
         )
         .bind(id)
         .bind(username)
         .bind(display_name)
+        .bind(email)
+        .bind(ldap_dn)
         .execute(pool)
         .await
         .map_err(|e| match e {
@@ -142,6 +158,50 @@ impl Users {
             other => other.into(),
         })?;
         Self::get_by_id(pool, id).await
+    }
+
+    /// 重复导入 LDAP 时刷新展示字段（不改密码、不改角色、不改变 disabled，§15 单向同步）。
+    pub async fn update_ldap_meta(
+        pool: &PgPool,
+        id: Uuid,
+        display_name: Option<&str>,
+        email: Option<&str>,
+        ldap_dn: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET display_name = COALESCE($2, display_name),
+                                email = COALESCE($3, email),
+                                ldap_dn = COALESCE($4, ldap_dn),
+                                updated_at = now()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(display_name)
+        .bind(email)
+        .bind(ldap_dn)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    /// 登录查找：按 username 或 email 匹配。
+    pub async fn get_by_identifier(pool: &PgPool, identifier: &str) -> Result<Option<User>> {
+        let row = sqlx::query_as::<_, UserRow>(&format!(
+            "SELECT {USER_SELECT} FROM users WHERE username = $1 OR email = $1"
+        ))
+        .bind(identifier)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(to_user))
+    }
+
+    /// 登录成功后刷新 last_login_at。
+    pub async fn touch_last_login(pool: &PgPool, id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE users SET last_login_at = now(), updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn update_display_name(pool: &PgPool, id: Uuid, display_name: &str) -> Result<()> {

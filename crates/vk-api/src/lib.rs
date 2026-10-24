@@ -8,6 +8,9 @@ pub mod auth;
 pub mod directories;
 pub mod error;
 pub mod files;
+pub mod publishes;
+pub mod search;
+pub mod shares;
 pub mod teams;
 pub mod users;
 
@@ -77,7 +80,42 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/health", get(health))
         .route("/_env", get(env_info))
         .route("/api/v1/auth/bootstrap", post(auth::bootstrap))
-        .route("/api/v1/auth/login", post(auth::login));
+        .route("/api/v1/auth/login", post(auth::login))
+        // 分享公开端点（无会话，§10）
+        .route("/api/v1/public/shares/{token}", get(shares::public_meta))
+        .route(
+            "/api/v1/public/shares/{token}/verify",
+            post(shares::public_verify),
+        )
+        .route(
+            "/api/v1/public/shares/{token}/entries",
+            get(shares::public_entries),
+        )
+        .route(
+            "/api/v1/public/shares/{token}/files/{file_id}/preview",
+            get(shares::public_preview),
+        )
+        .route(
+            "/api/v1/public/shares/{token}/files/{file_id}/download",
+            get(shares::public_download),
+        )
+        // 目录发布公开端点（无会话，§11）
+        .route(
+            "/api/v1/public/published/{publish_id}",
+            get(publishes::public_meta),
+        )
+        .route(
+            "/api/v1/public/published/{publish_id}/entries",
+            get(publishes::public_entries),
+        )
+        .route(
+            "/api/v1/public/published/{publish_id}/files/{file_id}/preview",
+            get(publishes::public_preview),
+        )
+        .route(
+            "/api/v1/public/published/{publish_id}/files/{file_id}/download",
+            get(publishes::public_download),
+        );
 
     let protected = Router::new()
         .route("/api/v1/auth/me", get(auth::me))
@@ -85,6 +123,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/{id}", get(users::get).patch(users::update))
         .route("/api/v1/users/{id}/password", post(users::set_password))
         .route("/api/v1/users/ldap/import", post(users::import_ldap))
+        .route("/api/v1/users/ldap/config", get(users::ldap_config))
         .route("/api/v1/teams", get(teams::list).post(teams::create))
         .route(
             "/api/v1/teams/{id}",
@@ -140,6 +179,16 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/files/{id}/rename", post(files::rename))
         .route("/api/v1/files/{id}/move", post(files::move_file))
         .route("/api/v1/files/{id}/copy", post(files::copy_file))
+        // 分享管理（§10）
+        .route("/api/v1/shares", get(shares::list).post(shares::create))
+        .route("/api/v1/shares/{id}/revoke", post(shares::revoke))
+        // 目录发布管理（§11）
+        .route(
+            "/api/v1/directories/{id}/publish",
+            get(publishes::get).post(publishes::enable).delete(publishes::disable),
+        )
+        // 文件名搜索（§9）
+        .route("/api/v1/search", get(search::search))
         .route("/api/v1/audits", get(audits::list))
         .layer(middleware::from_fn_with_state(
             state.clone(),

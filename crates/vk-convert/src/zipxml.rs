@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use zip::ZipArchive;
 
 /// 单元格字体信息。
@@ -81,8 +81,7 @@ pub struct ZipData {
 
 /// 解析 xlsx 字节中的样式表与各工作表几何信息（geoms 以工作表名为键）。
 pub fn load_xlsx_zip(bytes: &[u8]) -> Result<ZipData, String> {
-    let mut zip =
-        ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("zip 打开失败：{e}"))?;
+    let mut zip = ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("zip 打开失败：{e}"))?;
 
     let styles = read_entry(&mut zip, "xl/styles.xml")
         .map(|raw| parse_styles(&raw))
@@ -93,22 +92,20 @@ pub fn load_xlsx_zip(bytes: &[u8]) -> Result<ZipData, String> {
     let mut geoms = BTreeMap::new();
     for (name, path) in &name_paths {
         if let Some(raw) = read_entry(&mut zip, path)
-            && let Ok(g) = parse_sheet_geom(&raw) {
-                geoms.insert(name.clone(), g);
-            }
+            && let Ok(g) = parse_sheet_geom(&raw)
+        {
+            geoms.insert(name.clone(), g);
+        }
     }
-    Ok(ZipData {
-        styles,
-        geoms,
-    })
+    Ok(ZipData { styles, geoms })
 }
 
 /// 从 xl/workbook.xml 与 xl/_rels/workbook.xml.rels 解析
 /// 工作表名 -> 工作表 xml 路径（保持 workbook 中的声明顺序）。
 fn sheet_name_paths(zip: &mut ZipArchive<Cursor<&[u8]>>) -> Result<Vec<(String, String)>, String> {
     let wb = read_entry(zip, "xl/workbook.xml").ok_or("找不到 xl/workbook.xml")?;
-    let rels = read_entry(zip, "xl/_rels/workbook.xml.rels")
-        .ok_or("找不到 xl/_rels/workbook.xml.rels")?;
+    let rels =
+        read_entry(zip, "xl/_rels/workbook.xml.rels").ok_or("找不到 xl/_rels/workbook.xml.rels")?;
     let rels_map = parse_rels(&rels)?;
     let ordered = parse_workbook_sheets(&wb)?;
     let mut out = Vec::new();
@@ -183,9 +180,10 @@ fn xerr(e: quick_xml::Error) -> String {
 fn attr(attrs: quick_xml::events::attributes::Attributes, key: &str) -> Option<String> {
     for a in attrs {
         if let Ok(a) = a
-            && a.key.local_name().into_inner() == key {
-                return Some(a.value.to_string());
-            }
+            && a.key.local_name().into_inner() == key
+        {
+            return Some(a.value.to_string());
+        }
     }
     None
 }
@@ -235,7 +233,9 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                         }
                     }
                     "b" | "i" | "s" => {
-                        if section == Some("fonts") && let Some(f) = pending_font.as_mut() {
+                        if section == Some("fonts")
+                            && let Some(f) = pending_font.as_mut()
+                        {
                             let off = attr(e.attributes(), "val").as_deref() == Some("0");
                             match name {
                                 "b" => f.bold = !off,
@@ -261,7 +261,8 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                     "sz" => {
                         if section == Some("fonts")
                             && let Some(f) = pending_font.as_mut()
-                            && let Some(v) = attr(e.attributes(), "val").and_then(|v| v.parse().ok())
+                            && let Some(v) =
+                                attr(e.attributes(), "val").and_then(|v| v.parse().ok())
                         {
                             f.sz_half_pt = Some(v);
                         }
@@ -296,9 +297,10 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                     "fgColor" => {
                         if section == Some("fills")
                             && let Some(rgb) = attr(e.attributes(), "rgb")
-                                && let Some(hex) = rgb_hex(&rgb) {
-                                    pending_fill = Some(Some(hex));
-                                }
+                            && let Some(hex) = rgb_hex(&rgb)
+                        {
+                            pending_fill = Some(Some(hex));
+                        }
                     }
                     "border" => {
                         if section == Some("borders") {
@@ -306,7 +308,9 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                         }
                     }
                     "left" | "right" | "top" | "bottom" | "start" | "end" => {
-                        if section == Some("borders") && let Some(b) = pending_border.as_mut() {
+                        if section == Some("borders")
+                            && let Some(b) = pending_border.as_mut()
+                        {
                             let side = if name == "start" {
                                 "left"
                             } else if name == "end" {
@@ -319,8 +323,7 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                                 .as_deref()
                                 .map(|s| !s.is_empty() && s != "none")
                                 .unwrap_or(false);
-                            let color = attr(e.attributes(), "color")
-                                .and_then(|c| rgb_hex(&c));
+                            let color = attr(e.attributes(), "color").and_then(|c| rgb_hex(&c));
                             let side_obj = match side {
                                 "left" => &mut b.left,
                                 "right" => &mut b.right,
@@ -395,7 +398,9 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                         }
                     }
                     "b" | "i" | "s" => {
-                        if section == Some("fonts") && let Some(f) = pending_font.as_mut() {
+                        if section == Some("fonts")
+                            && let Some(f) = pending_font.as_mut()
+                        {
                             let off = attr(e.attributes(), "val").as_deref() == Some("0");
                             match name {
                                 "b" => f.bold = !off,
@@ -421,7 +426,8 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                     "sz" => {
                         if section == Some("fonts")
                             && let Some(f) = pending_font.as_mut()
-                            && let Some(v) = attr(e.attributes(), "val").and_then(|v| v.parse().ok())
+                            && let Some(v) =
+                                attr(e.attributes(), "val").and_then(|v| v.parse().ok())
                         {
                             f.sz_half_pt = Some(v);
                         }
@@ -454,9 +460,10 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                     "fgColor" => {
                         if section == Some("fills")
                             && let Some(rgb) = attr(e.attributes(), "rgb")
-                                && let Some(hex) = rgb_hex(&rgb) {
-                                    pending_fill = Some(Some(hex));
-                                }
+                            && let Some(hex) = rgb_hex(&rgb)
+                        {
+                            pending_fill = Some(Some(hex));
+                        }
                     }
                     "border" => {
                         if section == Some("borders") {
@@ -464,7 +471,9 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                         }
                     }
                     "left" | "right" | "top" | "bottom" | "start" | "end" => {
-                        if section == Some("borders") && let Some(b) = pending_border.as_mut() {
+                        if section == Some("borders")
+                            && let Some(b) = pending_border.as_mut()
+                        {
                             let side = if name == "start" {
                                 "left"
                             } else if name == "end" {
@@ -477,8 +486,7 @@ fn parse_styles(xml: &[u8]) -> Result<StyleTable, String> {
                                 .as_deref()
                                 .map(|s| !s.is_empty() && s != "none")
                                 .unwrap_or(false);
-                            let color = attr(e.attributes(), "color")
-                                .and_then(|c| rgb_hex(&c));
+                            let color = attr(e.attributes(), "color").and_then(|c| rgb_hex(&c));
                             let side_obj = match side {
                                 "left" => &mut b.left,
                                 "right" => &mut b.right,
@@ -609,22 +617,26 @@ fn parse_sheet_geom(xml: &[u8]) -> Result<SheetGeom, String> {
                 let name = e.local_name().into_inner();
                 match name {
                     "sheetFormatPr" => {
-                        if let Some(w) = attr(e.attributes(), "defaultColWidth").and_then(|v| v.parse().ok()) {
+                        if let Some(w) =
+                            attr(e.attributes(), "defaultColWidth").and_then(|v| v.parse().ok())
+                        {
                             geom.default_col_width = Some(w);
                         }
-                        if let Some(h) = attr(e.attributes(), "defaultRowHeight").and_then(|v| v.parse().ok()) {
+                        if let Some(h) =
+                            attr(e.attributes(), "defaultRowHeight").and_then(|v| v.parse().ok())
+                        {
                             geom.default_row_height = Some(h);
                         }
                     }
                     "cols" => in_cols = true,
                     "col" => {
                         if in_cols {
-                            let min = attr(e.attributes(), "min")
-                                .and_then(|v| v.parse::<u32>().ok());
-                            let max = attr(e.attributes(), "max")
-                                .and_then(|v| v.parse::<u32>().ok());
-                            let width = attr(e.attributes(), "width")
-                                .and_then(|v| v.parse::<f64>().ok());
+                            let min =
+                                attr(e.attributes(), "min").and_then(|v| v.parse::<u32>().ok());
+                            let max =
+                                attr(e.attributes(), "max").and_then(|v| v.parse::<u32>().ok());
+                            let width =
+                                attr(e.attributes(), "width").and_then(|v| v.parse::<f64>().ok());
                             if let (Some(min), Some(max), Some(width)) = (min, max, width) {
                                 for c in min - 1..max {
                                     geom.col_widths.insert(c, width);
@@ -643,10 +655,11 @@ fn parse_sheet_geom(xml: &[u8]) -> Result<SheetGeom, String> {
                     "c" => {
                         if let Some(ref_) = attr(e.attributes(), "r")
                             && let Some((row, col)) = parse_cell_ref(&ref_)
-                                && let Some(s) = attr(e.attributes(), "s").and_then(|v| v.parse::<u32>().ok())
-                                {
-                                    geom.cell_styles.insert((row, col), s);
-                                }
+                            && let Some(s) =
+                                attr(e.attributes(), "s").and_then(|v| v.parse::<u32>().ok())
+                        {
+                            geom.cell_styles.insert((row, col), s);
+                        }
                     }
                     _ => {}
                 }
@@ -682,7 +695,11 @@ fn parse_cell_ref(ref_: &str) -> Option<(u32, u32)> {
             break;
         }
     }
-    let row = ref_.rsplit(|c: char| c.is_ascii_alphabetic()).next()?.parse::<u32>().ok()?;
+    let row = ref_
+        .rsplit(|c: char| c.is_ascii_alphabetic())
+        .next()?
+        .parse::<u32>()
+        .ok()?;
     Some((row - 1, col - 1))
 }
 

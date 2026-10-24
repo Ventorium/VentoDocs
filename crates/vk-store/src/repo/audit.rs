@@ -49,11 +49,28 @@ impl Audit {
         detail: serde_json::Value,
         ip: Option<&str>,
     ) -> Result<()> {
+        Self::log_named(pool, actor, None, category, action, resource_type, resource_id, detail, ip).await
+    }
+
+    /// 在独立连接上写审计（匿名访问者，如分享访客）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log_named(
+        pool: &PgPool,
+        actor: Option<Uuid>,
+        actor_name: Option<&str>,
+        category: &str,
+        action: &str,
+        resource_type: Option<&str>,
+        resource_id: Option<&str>,
+        detail: serde_json::Value,
+        ip: Option<&str>,
+    ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO audit_logs (actor_id, category, action, resource_type, resource_id, detail, ip)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO audit_logs (actor_id, actor_name, category, action, resource_type, resource_id, detail, ip)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(actor)
+        .bind(actor_name)
         .bind(category)
         .bind(action)
         .bind(resource_type)
@@ -77,11 +94,28 @@ impl Audit {
         detail: serde_json::Value,
         ip: Option<&str>,
     ) -> Result<()> {
+        Self::log_tx_named(exec, actor, None, category, action, resource_type, resource_id, detail, ip).await
+    }
+
+    /// 在事务内写审计（匿名访问者）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log_tx_named<'a, E: PgExecutor<'a>>(
+        exec: E,
+        actor: Option<Uuid>,
+        actor_name: Option<&str>,
+        category: &str,
+        action: &str,
+        resource_type: Option<&str>,
+        resource_id: Option<&str>,
+        detail: serde_json::Value,
+        ip: Option<&str>,
+    ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO audit_logs (actor_id, category, action, resource_type, resource_id, detail, ip)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO audit_logs (actor_id, actor_name, category, action, resource_type, resource_id, detail, ip)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(actor)
+        .bind(actor_name)
         .bind(category)
         .bind(action)
         .bind(resource_type)
@@ -104,7 +138,8 @@ impl Audit {
     ) -> Result<Vec<AuditEntry>> {
         let rows: Vec<AuditRow> = sqlx::query_as(
             r#"
-            SELECT a.id, a.ts, a.actor_id, u.display_name AS actor_name, a.category, a.action,
+            SELECT a.id, a.ts, a.actor_id, COALESCE(u.display_name, a.actor_name) AS actor_name,
+                   a.category, a.action,
                    a.resource_type, a.resource_id, a.detail, a.ip
               FROM audit_logs a
               LEFT JOIN users u ON u.id = a.actor_id

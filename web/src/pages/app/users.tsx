@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useRequest } from 'ahooks'
-import { Button, Form, Input, Modal, Select, Space, Switch, Table, Tag } from 'antd'
+import { Alert, Button, Descriptions, Form, Input, Modal, Select, Space, Spin, Switch, Table, Tag } from 'antd'
 import { KeyOutlined, PlusOutlined, UserSwitchOutlined } from '@ant-design/icons'
 import { client } from '@/api'
 import type { LdapImportResult, Role, User } from '@/api/schema'
@@ -22,21 +22,6 @@ type EditUserForm = {
   disabled: boolean
 }
 
-/** 解析 LDAP 导入文本：每行「username[, 显示名]」。 */
-function parseLdapText(text: string): { username: string; display_name?: string }[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => {
-      const [u, ...rest] = l.split(',')
-      const username = u.trim()
-      const dn = rest.join(',').trim()
-      return dn ? { username, display_name: dn } : { username }
-    })
-    .filter((r) => r.username)
-}
-
 /** 用户管理：用户 CRUD、重置密码、禁用/启用、LDAP 导入（管理员）。 */
 const UsersPage = () => {
   const { user } = useAuth()
@@ -51,7 +36,6 @@ const UsersPage = () => {
   const [pwd, setPwd] = useState('')
   const [pwdSaving, setPwdSaving] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<LdapImportResult | null>(null)
 
@@ -120,18 +104,27 @@ const UsersPage = () => {
   }
 
   const doImport = async () => {
-    const rows = parseLdapText(importText)
-    if (rows.length === 0) {
-      msg.warning('请输入至少一行用户名')
-      return
-    }
     setImporting(true)
-    const res = await client.post('/api/v1/users/ldap/import', { body: { users: rows } })
+    const res = await client.post('/api/v1/users/ldap/import', { body: undefined })
     setImporting(false)
     if (res.error || !res.data) return
     setImportResult(res.data)
     refresh()
   }
+
+  // LDAP 服务端配置（只读展示，来自环境变量）
+  const {
+    data: ldapConfig,
+    loading: ldapConfigLoading,
+    error: ldapConfigError,
+  } = useRequest(
+    async () => {
+      const { error, data } = await client.get('/api/v1/users/ldap/config')
+      if (error || !data) throw new Error('LDAP 未配置')
+      return data
+    },
+    { ready: importOpen },
+  )
 
   const cols = [
     { title: '用户名', dataIndex: 'username' },
@@ -308,22 +301,55 @@ const UsersPage = () => {
       <Modal
         title="LDAP 导入"
         open={importOpen}
-        onOk={() => void doImport()}
         onCancel={() => setImportOpen(false)}
-        confirmLoading={importing}
-        okText="导入"
+        footer={[
+          <Button key="close" onClick={() => setImportOpen(false)}>
+            关闭
+          </Button>,
+          <Button
+            key="import"
+            type="primary"
+            icon={<UserSwitchOutlined />}
+            loading={importing}
+            disabled={ldapConfigLoading || !!ldapConfigError}
+            onClick={() => void doImport()}
+          >
+            从 LDAP 导入
+          </Button>,
+        ]}
         width={560}
         destroyOnHidden
       >
-        <div className="mb-8px text-13px text-rgba(0,0,0,0.65)">
-          每行一个用户，格式：<code>username</code> 或 <code>username, 显示名</code>。已存在的用户名将跳过，导入用户的来源标记为 LDAP。
+        <div className="flex flex-col gap-12px">
+          {ldapConfigError ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="LDAP 未配置"
+              description="请在服务端设置 VIENTO_LDAP_HOST 等环境变量并重启服务后重试。"
+            />
+          ) : ldapConfigLoading || !ldapConfig ? (
+            <div className="flex justify-center py-24px">
+              <Spin />
+            </div>
+          ) : (
+            <Descriptions size="small" column={1} bordered>
+              <Descriptions.Item label="服务器地址">
+                {ldapConfig!.host}:{ldapConfig!.port}
+                {ldapConfig!.startTls ? '（StartTLS）' : ''}
+              </Descriptions.Item>
+              <Descriptions.Item label="Base DN">{ldapConfig!.baseDn}</Descriptions.Item>
+              <Descriptions.Item label="用户过滤器">{ldapConfig!.userFilter}</Descriptions.Item>
+              <Descriptions.Item label="字段映射">
+                用户名={ldapConfig!.attrUsername} · 显示名={ldapConfig!.attrName} · 邮箱={ldapConfig!.attrEmail}
+              </Descriptions.Item>
+            </Descriptions>
+          )}
+          <div className="text-12px text-#9CA3AF">
+            按上述配置从 LDAP 同步用户：已存在的用户名将跳过并同步显示名/邮箱；导入的用户角色为普通用户。
+            不在系统内修改 LDAP 密码；LDAP 侧删除不联动删除本地用户。
+          </div>
         </div>
-        <Input.TextArea
-          rows={8}
-          value={importText}
-          onChange={(e) => setImportText(e.target.value)}
-          placeholder={'zhangsan\nlisi, 李四'}
-        />
       </Modal>
 
       <Modal
@@ -332,7 +358,6 @@ const UsersPage = () => {
         onOk={() => {
           setImportResult(null)
           setImportOpen(false)
-          setImportText('')
         }}
         cancelButtonProps={{ style: { display: 'none' } }}
         okText="完成"
@@ -340,16 +365,20 @@ const UsersPage = () => {
         {importResult && (
           <div className="flex flex-col gap-8px text-13px">
             <div>
-              <span className="font-600">新建（{importResult.created.length}）：</span>
-              {importResult.created.join('、') || '无'}
+              成功创建 <span className="font-600">{importResult.created}</span> 个用户
             </div>
             <div>
-              <span className="font-600">跳过（{importResult.skipped.length}）：</span>
-              {importResult.skipped.join('、') || '无'}
+              跳过（已存在） <span className="font-600">{importResult.skipped}</span> 个
             </div>
             <div>
-              <span className="font-600">失败（{importResult.failed.length}）：</span>
-              {importResult.failed.join('；') || '无'}
+              失败 <span className="font-600">{importResult.failed.length}</span> 个
+              {importResult.failed.length > 0 && (
+                <ul className="m-0 mt-4px ml-16px list-disc text-#DC2626">
+                  {importResult.failed.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         )}

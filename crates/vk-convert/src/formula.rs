@@ -24,18 +24,25 @@ impl FormulaBook {
     }
 
     pub fn add_value(&mut self, sheet: &str, ref_name: &str, value: f64) {
-        self.grid.insert((sheet.to_string(), ref_name.to_string()), value);
+        self.grid
+            .insert((sheet.to_string(), ref_name.to_string()), value);
     }
 
     pub fn add_formula(&mut self, sheet: &str, ref_name: &str, formula: &str) {
-        self.formulas.insert((sheet.to_string(), ref_name.to_string()), formula.to_string());
+        self.formulas.insert(
+            (sheet.to_string(), ref_name.to_string()),
+            formula.to_string(),
+        );
     }
 
     /// 求值公式（无需前导 `=`），失败返回 `None`。
     pub fn eval(&self, formula: &str, sheet: &str) -> Option<f64> {
         let chars: Vec<char> = formula.chars().collect();
         let mut seen: HashSet<CellKey> = HashSet::new();
-        let mut p = Pos { chars: &chars, i: 0 };
+        let mut p = Pos {
+            chars: &chars,
+            i: 0,
+        };
         let v = expr(self, &mut p, &mut seen, sheet)?;
         skip_ws(&mut p);
         (p.i == p.chars.len()).then_some(v)
@@ -97,7 +104,12 @@ fn term(book: &FormulaBook, p: &mut Pos, seen: &mut HashSet<CellKey>, sheet: &st
     }
 }
 
-fn factor(book: &FormulaBook, p: &mut Pos, seen: &mut HashSet<CellKey>, sheet: &str) -> Option<f64> {
+fn factor(
+    book: &FormulaBook,
+    p: &mut Pos,
+    seen: &mut HashSet<CellKey>,
+    sheet: &str,
+) -> Option<f64> {
     skip_ws(p);
     let ch = peek(p)?;
     if ch == '(' {
@@ -156,7 +168,10 @@ fn parse_cell(p: &mut Pos) -> Option<String> {
     if p.i == cs || p.i - cs > 3 {
         return None;
     }
-    let col: String = p.chars[cs..p.i].iter().map(|c| c.to_ascii_uppercase()).collect();
+    let col: String = p.chars[cs..p.i]
+        .iter()
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
     if peek(p) == Some('$') {
         p.i += 1;
     }
@@ -200,7 +215,10 @@ fn cell_value(
             return None; // 循环引用
         }
         let chars: Vec<char> = f.chars().collect();
-        let mut p = Pos { chars: &chars, i: 0 };
+        let mut p = Pos {
+            chars: &chars,
+            i: 0,
+        };
         let v = expr(book, &mut p, seen, &key.0)?;
         skip_ws(&mut p);
         let res = (p.i == p.chars.len()).then_some(v);

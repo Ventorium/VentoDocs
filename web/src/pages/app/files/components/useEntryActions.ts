@@ -12,6 +12,8 @@ export type ModalTarget =
   | { type: 'rename'; entry: Entry }
   | { type: 'move'; entry: Entry }
   | { type: 'copy'; entry: Entry }
+  | { type: 'share'; entry: Entry }
+  | { type: 'publish'; entry: Extract<Entry, { kind: 'directory' }> }
   | { type: 'unlock'; file: FileMeta; lock: FileLock }
   | { type: 'versions'; file: FileMeta }
   | { type: 'grants'; dir: Directory }
@@ -178,6 +180,9 @@ export function useEntryActions(
     if (hasPerm(perms, PERM.DOWNLOAD)) {
       items.push({ key: 'download', label: '下载', onClick: () => void doDownload(file) })
     }
+    if (hasPerm(perms, PERM.SHARE)) {
+      items.push({ key: 'share', label: '分享', onClick: () => setModal({ type: 'share', entry }) })
+    }
     if (hasPerm(perms, PERM.MODIFY_RENAME)) {
       items.push({ key: 'rename', label: '重命名', onClick: () => openRename(entry) })
     }
@@ -218,6 +223,12 @@ export function useEntryActions(
     }
     if (hasPerm(perms, PERM.MOVE_COPY)) {
       items.push({ key: 'move', label: '移动', onClick: () => setModal({ type: 'move', entry }) })
+    }
+    if (hasPerm(perms, PERM.SHARE)) {
+      items.push({ key: 'share', label: '分享', onClick: () => setModal({ type: 'share', entry }) })
+    }
+    if (hasPerm(perms, PERM.PUBLISH)) {
+      items.push({ key: 'publish', label: '发布为网站', onClick: () => setModal({ type: 'publish', entry }) })
     }
     if (me.role === 'admin' || directory.created_by === me.id) {
       items.push({

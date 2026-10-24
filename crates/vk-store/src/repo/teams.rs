@@ -134,11 +134,14 @@ impl Teams {
             auth_provider: String,
             role: String,
             disabled: bool,
+            email: Option<String>,
+            ldap_dn: Option<String>,
+            last_login_at: Option<DateTime<Utc>>,
             created_at: DateTime<Utc>,
         }
         let rows: Vec<MemberRow> = sqlx::query_as(
             "SELECT u.id, u.username, u.display_name, u.password_hash, u.auth_provider, u.role,
-                    u.disabled, u.created_at
+                    u.disabled, u.email, u.ldap_dn, u.last_login_at, u.created_at
              FROM team_members tm JOIN users u ON u.id = tm.user_id
              WHERE tm.team_id = $1 ORDER BY u.display_name",
         )
@@ -161,6 +164,9 @@ impl Teams {
                     _ => vk_core::model::Role::User,
                 },
                 disabled: r.disabled,
+                email: r.email,
+                ldap_dn: r.ldap_dn,
+                last_login_at: r.last_login_at,
                 created_at: r.created_at,
             })
             .collect())

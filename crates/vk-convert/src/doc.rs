@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use serde_json::{Map, Value, json};
 
 use crate::ConvertError;
@@ -29,8 +29,7 @@ const GT_LOWER_ROMAN: u8 = 7;
 
 /// 将 docx 字节转换为 Univer 文档数据模型。
 pub fn document(bytes: &[u8], file_name: &str) -> Result<Value, ConvertError> {
-    let docx =
-        docx_rs::read_docx(bytes).map_err(|e| ConvertError::Parse(e.to_string()))?;
+    let docx = docx_rs::read_docx(bytes).map_err(|e| ConvertError::Parse(e.to_string()))?;
     let model: Value = serde_json::from_str(&docx.json())
         .map_err(|e| ConvertError::Parse(format!("docx 数据解析失败：{e}")))?;
 
@@ -92,7 +91,10 @@ pub fn document(bytes: &[u8], file_name: &str) -> Result<Value, ConvertError> {
         if let Some(nums) = numberings.get("numberings").and_then(|v| v.as_array()) {
             for num in nums {
                 let num_id = num.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let abs_id = num.get("abstractNumId").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let abs_id = num
+                    .get("abstractNumId")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
                 if let Some(abs_num) = abs
                     .iter()
                     .find(|a| a.get("id").and_then(|v| v.as_u64()) == Some(abs_id as u64))
@@ -128,10 +130,8 @@ pub fn document(bytes: &[u8], file_name: &str) -> Result<Value, ConvertError> {
                                 .filter(|t| !t.is_empty())
                                 .map(normalize_glyph)
                                 .unwrap_or(default_glyph);
-                            let start = lv
-                                .get("start")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(1) as u32;
+                            let start =
+                                lv.get("start").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
                             num_info.insert((num_id, level), (gt, glyph, start));
                         }
                     }
@@ -140,7 +140,7 @@ pub fn document(bytes: &[u8], file_name: &str) -> Result<Value, ConvertError> {
         }
     }
 
-        // ---- 样式关联编号：styleId → (numId, ilvl)（docx-rs 不解析样式级 numPr）----
+    // ---- 样式关联编号：styleId → (numId, ilvl)（docx-rs 不解析样式级 numPr）----
     let style_num = style_numbering_map(bytes);
 
     // ---- 遍历正文 ----
@@ -233,9 +233,10 @@ pub fn document(bytes: &[u8], file_name: &str) -> Result<Value, ConvertError> {
 
                 // Univer 约定：紧邻表格的前一段，其 startIndex 指向 \x1f
                 if let Some(pi) = last_para_idx
-                    && let Value::Object(o) = &mut paragraphs[pi] {
-                        o.insert("startIndex".into(), json!(end - 1));
-                    }
+                    && let Value::Object(o) = &mut paragraphs[pi]
+                {
+                    o.insert("startIndex".into(), json!(end - 1));
+                }
 
                 tables.push(json!({
                     "startIndex": start,
@@ -280,15 +281,15 @@ pub fn document(bytes: &[u8], file_name: &str) -> Result<Value, ConvertError> {
         let max_level = levels.keys().copied().max().unwrap_or(0);
         let nesting: Vec<Value> = (0..=max_level)
             .map(|i| {
-                levels
-                    .remove(&i)
-                    .unwrap_or_else(|| json!({
+                levels.remove(&i).unwrap_or_else(|| {
+                    json!({
                         "bulletAlignment": 0,
                         "glyphFormat": "●",
                         "glyphSymbol": "●",
                         "startNumber": 1,
                         "textStyle": { "bl": 0 },
-                    }))
+                    })
+                })
             })
             .collect();
         lists.insert(
@@ -404,9 +405,7 @@ fn run_children_to_text(children: &[Value]) -> String {
 
 /// 段落样式：标题级别。
 fn para_style(p: &Value) -> Option<Value> {
-    let style_id = p
-        .pointer("/data/property/style")
-        .and_then(|v| v.as_str())?;
+    let style_id = p.pointer("/data/property/style").and_then(|v| v.as_str())?;
     let name = style_id;
     let lvl = heading_level(style_id, name)?;
     Some(json!({ "headingId": format!("h{}", lvl.min(3)) }))
@@ -493,12 +492,14 @@ fn table_rows_text(t: &Value) -> (Vec<Vec<String>>, usize) {
 fn style_numbering_map(bytes: &[u8]) -> BTreeMap<String, (u32, u32)> {
     /// 从事件属性中读取 `w:val` 数值。
     fn val_attr(e: &quick_xml::events::BytesStart) -> Option<u32> {
-        e.attributes().into_iter().find_map(|a| {
-            a.ok().and_then(|a| {
-                (a.key.local_name().into_inner() == "val")
-                    .then(|| a.value.parse::<u32>().ok())
+        e.attributes()
+            .into_iter()
+            .find_map(|a| {
+                a.ok().and_then(|a| {
+                    (a.key.local_name().into_inner() == "val").then(|| a.value.parse::<u32>().ok())
+                })
             })
-        }).flatten()
+            .flatten()
     }
 
     let mut out = BTreeMap::new();
