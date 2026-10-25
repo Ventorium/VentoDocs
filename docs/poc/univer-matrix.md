@@ -1,5 +1,9 @@
 # POC-1：Univer OSS 在线编辑能力矩阵（XLSX / DOCX / PPTX）
 
+> **状态更新（v1 实施后）**：POC-1 结论驱动了"Univer OSS 导入/导出依赖 Pro"的判断；
+> 实际 M2 未采用 Univer，改用 **ranuts/document**（edit.chaxus.com，AGPL-3.0，含完整 Office 格式导入导出）替换。
+> 本文保留为历史评估记录，结论中关于 Univer 的边界描述仍然有效；当前实现见 `docs/01-architecture.md` §9 与 `web/src/components/DocEditor.tsx`。
+>
 > M2 前置门禁文档。验证目标：确认 Univer OSS 对三种 Office 格式的**导入 → 编辑 → 导出**能力与保真度，
 > 划定 OSS 与 Pro 的功能边界，为 M2 范围决策提供依据。
 >

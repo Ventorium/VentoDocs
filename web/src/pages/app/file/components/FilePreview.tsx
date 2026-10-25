@@ -4,39 +4,100 @@ import { DownloadOutlined } from '@ant-design/icons'
 import type { FileMeta } from '@/api/schema'
 import { fetchFileContent } from '@/api'
 import FileIcon from '@/components/FileIcon'
+import DocEditor, { EDITOR_EDITABLE_EXT, EDITOR_READONLY_EXT } from '@/components/DocEditor'
 import { fileTypeInfo } from '@/lib/fileType'
-import UniverPreview from './UniverPreview'
+import { getAccessToken } from '@/store/token'
+import { getConfig } from '@/store/config'
 
 type FilePreviewProps = {
   file: FileMeta
   onDownload: () => void
-  /** 是否处于在线编辑模式（M2.2：仅 xlsx/docx 且持有锁时开启）。 */
+  /** 是否处于在线编辑模式（有修改权限且持有锁时开启，仅可编辑扩展名生效）。 */
   editable: boolean
   onExitEdit: () => void
   /** 保存成功回调（父级刷新文件详情）。 */
   onSaved: () => void
+  /** 版本冲突后重新加载（父级刷新文件详情）。 */
+  onReload: () => void
 }
 
-/** 后端可转换为 Univer 快照的扩展名。 */
-const UNIVER_SHEET_EXT = new Set(['xlsx', 'xls', 'csv', 'tsv'])
-const UNIVER_DOC_EXT = new Set(['docx'])
-
-/** 文件预览区：Office 走 Univer 预览（xlsx/docx 可编辑），图片/PDF 走 Blob URL，文本直显，其余展示提示卡片 + 下载。 */
-const FilePreview = ({ file, onDownload, editable, onExitEdit, onSaved }: FilePreviewProps) => {
+/**
+ * 文件预览区：Office 走在线编辑器（xlsx/csv/docx/pptx 可编辑，
+ * xls/xlsm/ods/doc/odt/rtf/ppt 只读），图片/PDF 走 Blob URL，文本直显，
+ * 其余展示提示卡片 + 下载。
+ */
+const FilePreview = ({ file, onDownload, editable, onExitEdit, onSaved, onReload }: FilePreviewProps) => {
   const ext = file.name.includes('.')
     ? (file.name.split('.').pop() ?? '').toLowerCase()
     : ''
+  const isEditorFile = EDITOR_EDITABLE_EXT.has(ext) || EDITOR_READONLY_EXT.has(ext)
+  const editorBase = getConfig().editorBase
+  const editorEditable = editable && EDITOR_EDITABLE_EXT.has(ext)
 
-  if (UNIVER_SHEET_EXT.has(ext) || UNIVER_DOC_EXT.has(ext)) {
+  /** 保存：multipart 上传编辑器导出字节到带版本接口；409 → conflict 异常由 DocEditor 弹冲突框。 */
+  const doSave = async (fileOut: File, baseVersion: number): Promise<number> => {
+    const form = new FormData()
+    form.append('file', fileOut, file.name)
+    form.append('base_version', String(baseVersion))
+    const token = getAccessToken()
+    const res = await fetch(`/api/v1/files/${file.id}/save`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    })
+    if (res.status === 409) {
+      let actual: number | undefined
+      try {
+        const body = (await res.clone().json()) as { error?: { details?: { actual?: number } } }
+        actual = body?.error?.details?.actual
+      } catch {
+        // 保留默认提示
+      }
+      const err = new Error('版本冲突') as Error & { conflict?: boolean; actual?: number }
+      err.conflict = true
+      err.actual = actual
+      throw err
+    }
+    if (!res.ok) {
+      let detail = '保存失败'
+      try {
+        const body = (await res.clone().json()) as { error?: { message?: string } }
+        detail = body?.error?.message ?? detail
+      } catch {
+        // 保留默认提示
+      }
+      throw new Error(detail)
+    }
+    const body = (await res.json()) as { current_version?: number }
+    return body.current_version ?? baseVersion + 1
+  }
+
+  if (isEditorFile) {
+    if (!editorBase) {
+      return (
+        <div className="flex flex-col items-center gap-12px py-80px">
+          <FileIcon name={file.name} size={48} />
+          <div className="text-14px text-rgba(0,0,0,0.65)">在线编辑器未部署，请下载后查看</div>
+          <Button type="primary" icon={<DownloadOutlined />} onClick={onDownload}>
+            下载文件
+          </Button>
+        </div>
+      )
+    }
     return (
-      <UniverPreview
+      <DocEditor
         key={file.id}
-        file={file}
-        unit={UNIVER_DOC_EXT.has(ext) ? 'doc' : 'sheet'}
-        onDownload={onDownload}
-        editable={editable}
-        onExitEdit={onExitEdit}
+        editorBase={editorBase}
+        fileName={file.name}
+        fetchBytes={async () => (await fetchFileContent(file.id)).arrayBuffer()}
+        readonly={!editorEditable}
+        baseVersion={file.current_version}
+        onSave={editorEditable ? doSave : undefined}
         onSaved={onSaved}
+        onReload={onReload}
+        onExitEdit={onExitEdit}
+        onDownload={onDownload}
+        fill
       />
     )
   }
@@ -130,17 +191,10 @@ const FilePreview = ({ file, onDownload, editable, onExitEdit, onSaved }: FilePr
     )
   }
 
-  const hint =
-    ext === 'pptx' || ext === 'ppt'
-      ? 'PPT 暂不支持在线预览，请下载后查看'
-      : preview === 'office'
-        ? '该文件类型暂不支持在线预览，请下载后查看'
-        : '该文件类型暂不支持在线预览'
-
   return (
     <div className="flex flex-col items-center gap-12px py-80px">
       <FileIcon name={file.name} size={48} />
-      <div className="text-14px text-rgba(0,0,0,0.65)">{hint}</div>
+      <div className="text-14px text-rgba(0,0,0,0.65)">该文件类型暂不支持在线预览，请下载后查看</div>
       <Button type="primary" icon={<DownloadOutlined />} onClick={onDownload}>
         下载文件
       </Button>

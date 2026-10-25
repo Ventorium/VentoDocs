@@ -1,7 +1,12 @@
-import { useRef, useState } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { Button, Progress } from 'antd'
 import { CheckCircleFilled, CloseCircleFilled, CloudUploadOutlined } from '@ant-design/icons'
 import { uploadFile } from '@/lib/upload'
+
+export type UploadButtonHandle = {
+  /** 编程式打开文件选择框（供目录空白处右键菜单「上传文件」调用） */
+  open: () => void
+}
 
 type Task = {
   id: string
@@ -18,9 +23,12 @@ type UploadButtonProps = {
 }
 
 /** 上传按钮 + 任务进度列表（支持多文件并发）。 */
-const UploadButton = ({ dirId, disabled, onFinished }: UploadButtonProps) => {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [tasks, setTasks] = useState<Task[]>([])
+const UploadButton = forwardRef<UploadButtonHandle, UploadButtonProps>(
+  ({ dirId, disabled, onFinished }, ref) => {
+    const inputRef = useRef<HTMLInputElement>(null)
+    const [tasks, setTasks] = useState<Task[]>([])
+
+    useImperativeHandle(ref, () => ({ open: () => inputRef.current?.click() }), [])
 
   const patchTask = (id: string, patch: Partial<Task>) => {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
@@ -110,6 +118,8 @@ const UploadButton = ({ dirId, disabled, onFinished }: UploadButtonProps) => {
       )}
     </div>
   )
-}
+})
+
+UploadButton.displayName = 'UploadButton'
 
 export default UploadButton

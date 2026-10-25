@@ -1,0 +1,65 @@
+# 生产部署：单二进制（内嵌前端）+ PostgreSQL 16 + Redis 7。
+# 用法：
+#   1. cp .env.example .env 并按需修改（至少 VIENTO_JWT_SECRET）
+#   2. 可选：bash scripts/fetch-editor.sh 拉取在线编辑器资源到 ./editor-dist
+#   3. docker build -t vento:latest .
+#   4. docker compose -f compose.prod.yml up -d
+# 首次访问 http://<host>:8080/ 时无用户，可经 /api/v1/bootstrap 创建管理员。
+services:
+  pg:
+    image: postgres:16
+    container_name: vento-pg
+    environment:
+      POSTGRES_USER: vento
+      POSTGRES_PASSWORD: vento
+      POSTGRES_DB: vento
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vento"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    container_name: vento-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  vento:
+    image: vento:latest
+    container_name: vento
+    depends_on:
+      pg:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # 容器内网络：覆盖 .env 中面向宿主机的地址
+      VIENTO_DB_URL: postgres://vento:vento@pg:5432/vento
+      VIENTO_REDIS_URL: redis://redis:6379
+      VIENTO_BIND_ADDR: 0.0.0.0:8080
+      VIENTO_DATA_DIR: /data
+      # 在线编辑器资源（可选）：挂载了 editor-dist 才生效
+      VENTO_EDITOR_DIST: /editor-dist
+    volumes:
+      - ./data:/data
+      # 可选：不挂则在线编辑功能自动降级（前端提示“在线编辑器未部署”）
+      - ./editor-dist:/editor-dist:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

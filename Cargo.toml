@@ -5,7 +5,6 @@ members = [
     "crates/vk-store",
     "crates/vk-api",
     "crates/vk-app",
-    "crates/vk-convert",
 ]
 
 [workspace.package]

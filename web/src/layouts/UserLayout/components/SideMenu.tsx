@@ -8,7 +8,7 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  SearchOutlined,
+  SettingOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -33,7 +33,7 @@ const SideMenu = () => {
     const base: MenuItem[] = [
       { key: '/app/files', icon: <FileTextOutlined />, label: '文件管理' },
       { key: '/app/trash', icon: <DeleteOutlined />, label: '回收站' },
-      { key: '/app/search', icon: <SearchOutlined />, label: '搜索' },
+      { key: '/app/settings', icon: <SettingOutlined />, label: '外观设置' },
     ]
     if (isAdmin) {
       base.push(
@@ -46,16 +46,11 @@ const SideMenu = () => {
     return base
   }, [isAdmin])
 
-  // 当前选中：最长前缀匹配
+  // 当前选中：最长前缀匹配，兜底文件管理（如 /app/file/:id 详情页）
   const selectedKey = useMemo(() => {
     const keys = items.map((i) => (i && 'key' in i ? (i.key as string) : '')).filter(Boolean)
-    let best = '/app/files'
-    for (const k of keys) {
-      if (location.pathname === k || location.pathname.startsWith(k + '/')) {
-        if (k.length > best.length) best = k
-      }
-    }
-    return best
+    const hit = keys.find((k) => location.pathname === k || location.pathname.startsWith(k + '/'))
+    return hit ?? '/app/files'
   }, [items, location.pathname])
 
   const userMenuItems: MenuItem[] = [
@@ -76,78 +71,84 @@ const SideMenu = () => {
       className="!border-r !border-solid"
       style={{ borderRight: `1px solid ${colorBorderSecondary}`, height: '100%' }}
     >
-      {/* 品牌区 */}
-      <div
-        className={cn(
-          'flex items-center shrink-0 transition-all',
-          collapsed ? 'justify-center px-0 h-56px' : 'justify-start px-16px h-56px',
-        )}
-      >
-        <div className="w-28px h-28px rounded-6px bg-#2563EB flex items-center justify-center text-white font-bold text-15px shrink-0">
-          V
+      {/* antd Sider 子容器默认非 flex，用自有容器撑满高度：品牌区在上、菜单居中、用户区沉底 */}
+      <div className="flex h-full flex-col">
+        {/* 品牌区（右侧为折叠开关） */}
+        <div
+          className={cn(
+            'flex items-center shrink-0 transition-all h-56px',
+            collapsed ? 'justify-center gap-8px' : 'px-12px',
+          )}
+        >
+          <div className="w-28px h-28px rounded-6px bg-#2563EB flex items-center justify-center text-white font-bold text-15px shrink-0">
+            V
+          </div>
+          {!collapsed && (
+            <>
+              <span className="ml-10px font-semibold text-15px text-rgba(0,0,0,0.88) whitespace-nowrap">
+                VentoDocs
+              </span>
+              <span className="flex-1" />
+            </>
+          )}
+          <button
+            type="button"
+            className="w-28px h-28px rounded-6px flex items-center justify-center shrink-0 cursor-pointer hover:bg-#F5F5F5"
+            style={{ color: colorTextSecondary }}
+            title={collapsed ? '展开侧栏' : '收起侧栏'}
+            onClick={() => setCollapsed((v) => !v)}
+          >
+            {collapsed ? <MenuUnfoldOutlined className="text-14px" /> : <MenuFoldOutlined className="text-14px" />}
+          </button>
         </div>
-        {!collapsed && (
-          <span className="ml-10px font-semibold text-15px text-rgba(0,0,0,0.88) whitespace-nowrap">
-            VentoDocs
-          </span>
-        )}
-      </div>
 
-      {/* 导航菜单 */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-8px">
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={items}
-          onClick={({ key }) => {
-            // 侧栏菜单 key 即路由路径
-            navigate(key)
-          }}
-          style={{ borderInlineEnd: 'none' }}
-        />
-      </div>
+        {/* 导航菜单 */}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8px">
+          <Menu
+            mode="inline"
+            selectedKeys={[selectedKey]}
+            items={items}
+            onClick={({ key }) => {
+              // 侧栏菜单 key 即路由路径
+              navigate(key)
+            }}
+            style={{ borderInlineEnd: 'none' }}
+          />
+        </div>
 
-      {/* 底部用户区 */}
-      <div className="shrink-0 border-t border-solid px-8px py-10px" style={{ borderColor: colorBorderSecondary }}>
-        {collapsed ? (
-          <div className="flex justify-center">
-            <Dropdown menu={{ items: userMenuItems }} trigger={['click']}>
-              <Tooltip title={user?.display_name || user?.username} placement="right">
-                <div
-                  className="w-32px h-32px rounded-full bg-#2563EB text-white flex items-center justify-center cursor-pointer text-13px"
-                  style={{ color: '#fff' }}
-                >
+        {/* 底部用户区 */}
+        <div className="shrink-0 border-t border-solid px-8px py-10px" style={{ borderColor: colorBorderSecondary }}>
+          {collapsed ? (
+            <div className="flex justify-center">
+              <Dropdown menu={{ items: userMenuItems }} trigger={['click']}>
+                <Tooltip title={user?.display_name || user?.username} placement="right">
+                  <div
+                    className="w-32px h-32px rounded-full bg-#2563EB text-white flex items-center justify-center cursor-pointer text-13px"
+                    style={{ color: '#fff' }}
+                  >
+                    {(user?.display_name || user?.username || '?').slice(0, 1).toUpperCase()}
+                  </div>
+                </Tooltip>
+              </Dropdown>
+            </div>
+          ) : (
+            <Dropdown menu={{ items: userMenuItems }} trigger={['click']} placement="topRight">
+              <div className="flex items-center cursor-pointer rounded-6px hover:bg-#F5F5F5 px-8px py-6px">
+                <div className="w-32px h-32px rounded-full bg-#2563EB flex items-center justify-center text-white text-13px shrink-0">
                   {(user?.display_name || user?.username || '?').slice(0, 1).toUpperCase()}
                 </div>
-              </Tooltip>
+                <div className="ml-10px min-w-0 flex-1">
+                  <div className="text-13px font-medium text-rgba(0,0,0,0.88) truncate">
+                    {user?.display_name || user?.username}
+                  </div>
+                  <div className="text-12px" style={{ color: colorTextSecondary }}>
+                    {isAdmin ? '管理员' : '普通用户'} · {user?.username}
+                  </div>
+                </div>
+              </div>
             </Dropdown>
-          </div>
-        ) : (
-          <Dropdown menu={{ items: userMenuItems }} trigger={['click']} placement="topRight">
-            <div className="flex items-center cursor-pointer rounded-6px hover:bg-#F5F5F5 px-8px py-6px">
-              <div className="w-32px h-32px rounded-full bg-#2563EB flex items-center justify-center text-white text-13px shrink-0">
-                {(user?.display_name || user?.username || '?').slice(0, 1).toUpperCase()}
-              </div>
-              <div className="ml-10px min-w-0 flex-1">
-                <div className="text-13px font-medium text-rgba(0,0,0,0.88) truncate">
-                  {user?.display_name || user?.username}
-                </div>
-                <div className="text-12px" style={{ color: colorTextSecondary }}>
-                  {isAdmin ? '管理员' : '普通用户'} · {user?.username}
-                </div>
-              </div>
-            </div>
-          </Dropdown>
-        )}
-      </div>
-
-      {/* 折叠开关 */}
-      <div
-        className="shrink-0 flex items-center justify-center h-40px cursor-pointer border-t border-solid hover:bg-#F5F5F5"
-        style={{ borderColor: colorBorderSecondary }}
-        onClick={() => setCollapsed((v) => !v)}
-      >
-        {collapsed ? <MenuUnfoldOutlined className="text-14px" /> : <MenuFoldOutlined className="text-14px" />}
+          )}
+        </div>
       </div>
     </Layout.Sider>
   )

@@ -3,9 +3,34 @@
 use super::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{PgExecutor, PgPool};
+use tokio::task_local;
 use uuid::Uuid;
 
 pub struct Audit;
+
+task_local! {
+    /// 当前请求的客户端 IP。API 层中间件通过 [`scope_client_ip`] 在请求上下文里设置，
+    /// 审计写入函数自动读取；后台任务（无请求上下文）记为 NULL。
+    static CLIENT_IP: Option<String>;
+}
+
+/// 在携带客户端 IP 的请求上下文中执行一个 future（API 中间件调用）。
+pub fn scope_client_ip<R: std::future::Future>(
+    ip: Option<String>,
+    fut: R,
+) -> impl std::future::Future<Output = R::Output> {
+    CLIENT_IP.scope(ip, fut)
+}
+
+/// 读取当前请求的客户端 IP（非请求上下文返回 None）。
+fn current_ip() -> Option<String> {
+    CLIENT_IP.try_with(|v| v.clone()).ok().flatten()
+}
+
+/// 解析审计 IP：显式参数优先，缺省时取当前请求上下文。
+fn resolve_ip(ip: Option<&str>) -> Option<String> {
+    ip.map(str::to_string).or_else(current_ip)
+}
 
 /// 审计日志行（列表查询用，含操作人名称）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -65,6 +90,7 @@ impl Audit {
         detail: serde_json::Value,
         ip: Option<&str>,
     ) -> Result<()> {
+        let ip = resolve_ip(ip);
         sqlx::query(
             "INSERT INTO audit_logs (actor_id, actor_name, category, action, resource_type, resource_id, detail, ip)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -76,7 +102,7 @@ impl Audit {
         .bind(resource_type)
         .bind(resource_id)
         .bind(&detail)
-        .bind(ip)
+        .bind(ip.as_deref())
         .execute(pool)
         .await?;
         Ok(())
@@ -110,6 +136,7 @@ impl Audit {
         detail: serde_json::Value,
         ip: Option<&str>,
     ) -> Result<()> {
+        let ip = resolve_ip(ip);
         sqlx::query(
             "INSERT INTO audit_logs (actor_id, actor_name, category, action, resource_type, resource_id, detail, ip)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -121,7 +148,7 @@ impl Audit {
         .bind(resource_type)
         .bind(resource_id)
         .bind(&detail)
-        .bind(ip)
+        .bind(ip.as_deref())
         .execute(exec)
         .await?;
         Ok(())

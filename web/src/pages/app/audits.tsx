@@ -17,7 +17,14 @@ const CATEGORY_OPTIONS = [
   { value: 'user', label: '用户' },
   { value: 'team', label: '团队' },
   { value: 'admin', label: '管理' },
+  { value: 'lock', label: '编辑锁' },
+  { value: 'publish', label: '发布' },
+  { value: 'share', label: '分享' },
 ]
+
+const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  CATEGORY_OPTIONS.map((o) => [o.value, o.label]),
+)
 
 const CATEGORY_TAG: Record<string, string> = {
   auth: 'geekblue',
@@ -26,6 +33,60 @@ const CATEGORY_TAG: Record<string, string> = {
   user: 'purple',
   team: 'cyan',
   admin: 'red',
+  lock: 'gold',
+  publish: 'magenta',
+  share: 'lime',
+}
+
+/** 审计操作标识 → 中文显示（数据库中保存英文标识，仅展示层翻译）。 */
+const ACTION_LABEL: Record<string, string> = {
+  bootstrap: '系统初始化',
+  upload: '上传文件',
+  save: '保存文件',
+  trash: '删除文件',
+  restore: '恢复文件',
+  restore_version: '恢复历史版本',
+  dir_create: '新建目录',
+  dir_trash: '删除目录',
+  dir_restore: '恢复目录',
+  dir_rename: '重命名目录',
+  dir_move: '移动目录',
+  move: '移动文件',
+  rename: '重命名文件',
+  lock: '获取编辑锁',
+  unlock: '释放编辑锁',
+  publish_enable: '启用发布',
+  publish_disable: '停用发布',
+  share_create: '创建分享',
+  share_revoke: '撤销分享',
+  share_access: '访问分享',
+  share_verify: '验证分享',
+  share_preview: '分享预览',
+  share_download: '分享下载',
+  grant_set: '设置目录权限',
+  grant_remove: '移除目录权限',
+  team_create: '创建团队',
+  team_rename: '重命名团队',
+  team_add_member: '添加团队成员',
+  team_remove_member: '移除团队成员',
+  team_delete: '删除团队',
+  user_create: '创建用户',
+  user_update: '更新用户',
+  password_reset: '重置密码',
+  ldap_import: 'LDAP 导入用户',
+}
+
+const ACTION_LABEL_TO_KEY: Record<string, string> = Object.fromEntries(
+  Object.entries(ACTION_LABEL).map(([k, v]) => [v, k]),
+)
+
+const RESOURCE_LABEL: Record<string, string> = {
+  file: '文件',
+  directory: '目录',
+  user: '用户',
+  team: '团队',
+  share: '分享',
+  publish: '发布',
 }
 
 /** 审计日志：按类别/操作筛选，分页查看（管理员）。 */
@@ -44,7 +105,7 @@ const AuditsPage = () => {
       }
       if (category) query.category = category
       const act = action.trim()
-      if (act) query.action = act
+      if (act) query.action = ACTION_LABEL_TO_KEY[act] ?? act
       const { error: err, data: d } = await client.get('/api/v1/audits', { query })
       if (err || !d) throw new Error('加载失败')
       return d as AuditEntry[]
@@ -73,15 +134,15 @@ const AuditsPage = () => {
       title: '类别',
       dataIndex: 'category',
       width: 90,
-      render: (c: string) => <Tag color={CATEGORY_TAG[c] ?? 'default'}>{c}</Tag>,
+      render: (c: string) => <Tag color={CATEGORY_TAG[c] ?? 'default'}>{CATEGORY_LABEL[c] ?? c}</Tag>,
     },
-    { title: '操作', dataIndex: 'action', width: 160 },
+    { title: '操作', dataIndex: 'action', width: 160, render: (a: string) => ACTION_LABEL[a] ?? a },
     {
       title: '资源',
       width: 200,
       ellipsis: true,
       render: (_: unknown, r: AuditEntry) =>
-        r.resource_type ? `${r.resource_type}:${(r.resource_id ?? '').slice(0, 8)}` : '-',
+        r.resource_type ? `${RESOURCE_LABEL[r.resource_type] ?? r.resource_type}:${(r.resource_id ?? '').slice(0, 8)}` : '-',
     },
     {
       title: 'IP',
@@ -127,7 +188,7 @@ const AuditsPage = () => {
         />
         <Input
           allowClear
-          placeholder="操作，如 upload"
+          placeholder="操作，如 上传文件"
           value={action}
           onChange={(e) => setAction(e.target.value)}
           style={{ width: 200 }}

@@ -1,5 +1,7 @@
 //! 目录树持久化（M0：创建 / 查询 / 列表；M1 补齐移动 / 重命名 / 回收站）。
 
+use std::collections::{BTreeSet, HashMap};
+
 use super::{ROOT_DIR, Result, StoreError};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -170,6 +172,51 @@ impl Directories {
         .fetch_all(pool)
         .await?;
         Ok(rows.iter().map(to_dir).collect())
+    }
+
+    /// 解析目录 id 路径（形如 `/id1/id2`，不含根目录）为 id 列表。
+    pub fn parse_id_path(path: &str) -> Vec<Uuid> {
+        path.split('/').filter_map(|s| Uuid::parse_str(s).ok()).collect()
+    }
+
+    /// 将 id 链渲染为可读名称路径；空链表示根目录。
+    pub fn render_id_path(ids: &[Uuid], names: &HashMap<Uuid, String>) -> String {
+        if ids.is_empty() {
+            return "根目录".to_string();
+        }
+        let parts: Vec<&str> = ids
+            .iter()
+            .map(|id| names.get(id).map(String::as_str).unwrap_or("—"))
+            .collect();
+        format!("/{}", parts.join("/"))
+    }
+
+    /// 批量查询目录名称，用于把回收站条目的 id 路径解析为可读原路径。
+    pub async fn names_by_ids(pool: &PgPool, ids: &[Uuid]) -> Result<HashMap<Uuid, String>> {
+        let uniq: Vec<Uuid> = ids.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
+        if uniq.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(Uuid, String)> =
+            sqlx::query_as("SELECT id, name FROM directories WHERE id = ANY($1)")
+                .bind(&uniq)
+                .fetch_all(pool)
+                .await?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// 批量查询目录 id 路径。
+    pub async fn paths_by_ids(pool: &PgPool, ids: &[Uuid]) -> Result<HashMap<Uuid, String>> {
+        let uniq: Vec<Uuid> = ids.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
+        if uniq.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(Uuid, String)> =
+            sqlx::query_as("SELECT id, path FROM directories WHERE id = ANY($1)")
+                .bind(&uniq)
+                .fetch_all(pool)
+                .await?;
+        Ok(rows.into_iter().collect())
     }
 
     /// 重命名；根目录不可改名。

@@ -64,6 +64,12 @@ export type FileMeta = {
   deleted_at?: string | null
 }
 
+/** 回收站目录项：Directory + 删除前可读路径。 */
+export type TrashedDirectory = Directory & { original_path: string }
+
+/** 回收站文件项：FileMeta + 删除前可读路径。 */
+export type TrashedFile = FileMeta & { original_path: string }
+
 export type FileLock = {
   locked_by: string
   locked_by_name: string
@@ -108,15 +114,8 @@ export type VersionInfo = {
   created_by: string
   created_at: string
   created_by_name: string
-  /** office = 上传的原始文件；univer = 在线编辑保存的快照。 */
+  /** office = 原始文件字节（上传与在线编辑保存均为此值）；univer = 历史 Univer 快照（存量数据）。 */
   encoding: 'office' | 'univer'
-}
-
-/** Univer 在线编辑保存（POST /files/{id}/univer-save）。 */
-export type UniverSaveReq = {
-  baseVersion: number
-  snapshot: Record<string, unknown>
-  note?: string
 }
 
 /** 审计日志条目（管理员列表接口返回）。 */
@@ -286,13 +285,6 @@ export type LoginResp = {
   user: User
 }
 
-/** Univer 在线预览：服务端 Rust 转换 Office/CSV → Univer 快照（M2.1 只读）。 */
-export type UniverPreviewResp = {
-  unitType: 'sheet' | 'doc'
-  snapshot: any
-  fileVersion: number
-}
-
 export type OkResp = {
   ok: boolean
 }
@@ -409,6 +401,13 @@ type TeamIdParams = { team_id: string }
 type GrantParams = { id: string; ptype: PrincipalType; pid: string }
 type VersionParams = { id: string; version: number }
 
+/** 桌面外观设置（GET/PUT /settings/desktop，整对象读写）。 */
+export type DesktopSettings = {
+  theme_mode: 'auto' | 'light' | 'dark'
+  wallpaper: string
+  accent_color: string | null
+}
+
 export type OpenAPIs = {
   get: {
     '/api/v1/auth/me': { query: any; params: any; body: any; headers: any; response: AuthUser }
@@ -420,17 +419,17 @@ export type OpenAPIs = {
     '/api/v1/directories/root': { query: any; params: any; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}': { query: any; params: IdParams; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: any; headers: any; response: { grants: GrantItem[] } }
-    '/api/v1/trash/directories': { query: any; params: any; body: any; headers: any; response: Directory[] }
-    '/api/v1/trash/files': { query: any; params: any; body: any; headers: any; response: FileMeta[] }
+    '/api/v1/trash/directories': { query: any; params: any; body: any; headers: any; response: TrashedDirectory[] }
+    '/api/v1/trash/files': { query: any; params: any; body: any; headers: any; response: TrashedFile[] }
     '/api/v1/files/{id}': { query: any; params: IdParams; body: any; headers: any; response: FileOut }
     '/api/v1/files/{id}/versions': { query: VersionsQuery; params: IdParams; body: any; headers: any; response: VersionInfo[] }
     // 二进制内容：客户端不解析非 JSON，实际经 raw fetch 下载，见 api/index.ts 的 fetchFileContent。
     '/api/v1/files/{id}/content': { query: any; params: IdParams; body: any; headers: any; response: Response }
-    '/api/v1/files/{id}/univer-preview': { query: any; params: IdParams; body: any; headers: any; response: UniverPreviewResp }
     '/api/v1/shares': { query: { resource_type: string; resource_id: string }; params: any; body: any; headers: any; response: ShareListOut }
     '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: PublishGetOut }
     '/api/v1/search': { query: SearchQuery; params: any; body: any; headers: any; response: SearchHit[] }
     '/api/v1/users/ldap/config': { query: any; params: any; body: any; headers: any; response: LdapConfigInfo }
+    '/api/v1/settings/desktop': { query: any; params: any; body: any; headers: any; response: DesktopSettings }
   }
   post: {
     '/api/v1/auth/bootstrap': { query: any; params: any; body: BootstrapReq; headers: any; response: LoginResp }
@@ -447,7 +446,6 @@ export type OpenAPIs = {
     '/api/v1/directories/{id}/restore': { query: any; params: IdParams; body: any; headers: any; response: Directory }
     '/api/v1/directories/{id}/files': { query: any; params: IdParams; body: SaveFileReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/save': { query: any; params: IdParams; body: SaveFileReq; headers: any; response: FileMeta }
-    '/api/v1/files/{id}/univer-save': { query: any; params: IdParams; body: UniverSaveReq; headers: any; response: FileMeta }
     '/api/v1/files/{id}/lock': { query: any; params: IdParams; body: any; headers: any; response: { locked: true } }
     '/api/v1/files/{id}/unlock': { query: any; params: IdParams; body: UnlockReq; headers: any; response: OkResp }
     '/api/v1/files/{id}/restore': { query: any; params: IdParams; body: any; headers: any; response: FileMeta }
@@ -462,6 +460,7 @@ export type OpenAPIs = {
   }
   put: {
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: SetGrantReq; headers: any; response: { ok: boolean; perms: number } }
+    '/api/v1/settings/desktop': { query: any; params: any; body: Partial<DesktopSettings>; headers: any; response: DesktopSettings }
   }
   patch: {
     '/api/v1/users/{id}': { query: any; params: IdParams; body: UpdateUserReq; headers: any; response: User }

@@ -4,9 +4,10 @@ import { Spin } from 'antd'
 import { XProvider } from '@ant-design/x'
 import zhCN from 'antd/locale/zh_CN'
 import { useAuth } from '@/store/useAuth'
+import { useSettings } from '@/store/useSettings'
 import GlobalHistory from '@/components/GlobalHistory'
 import GlobalMessage from '@/components/GlobalMessage'
-import { AppTheme } from '@/theme'
+import { getAntdTheme } from '@/theme'
 import routes from '~react-pages'
 
 const AppRoutes = () => {
@@ -35,11 +36,19 @@ const _App = () => {
     }
   }, [ready, logged, pathname, navigate])
 
+  // 登录态就绪后加载桌面设置（主题/壁纸偏好）；未登录不发请求，避免 401
+  useEffect(() => {
+    if (ready && logged) {
+      useSettings.getState().loadFromBackend().catch(() => {})
+    }
+  }, [ready, logged])
+
   return <AppRoutes />
 }
 
 function App() {
   const { init: initAuth } = useAuth()
+  const { resolvedTheme } = useSettings()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -54,7 +63,7 @@ function App() {
     <BrowserRouter>
       <GlobalHistory />
       <GlobalMessage />
-      <XProvider locale={zhCN} theme={{ token: { colorPrimary: AppTheme.primaryColor } }}>
+      <XProvider locale={zhCN} theme={getAntdTheme(resolvedTheme)}>
         {ready ? <_App /> : <Spin size="large" fullscreen />}
       </XProvider>
     </BrowserRouter>

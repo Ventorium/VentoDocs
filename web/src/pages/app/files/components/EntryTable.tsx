@@ -1,5 +1,8 @@
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router'
-import { Button, Dropdown, Modal, Table, Tag } from 'antd'
+import { Button, Dropdown, Menu, Modal, Table, Tag } from 'antd'
+import type { MenuProps } from 'antd'
 import { LockOutlined, MoreOutlined } from '@ant-design/icons'
 import type { DirectoryPage, Entry } from '@/api/schema'
 import FileIcon, { FolderIcon } from '@/components/FileIcon'
@@ -11,17 +14,29 @@ import ShareModal from './ShareModal'
 import PublishModal from './PublishModal'
 import { useEntryActions } from './useEntryActions'
 import { formatBytes, formatTime } from '@/lib/format'
+import { tokens } from '@/theme'
 import type { AuthUser } from '@/store/useAuth'
 
 type EntryTableProps = {
   page: DirectoryPage
   me: AuthUser
   onReload: () => void
+  /** 空白处右键菜单所需（目录视图传入） */
+  canCreateDir?: boolean
+  canUpload?: boolean
+  onNewDir?: () => void
+  onUpload?: () => void
 }
 
-/** 目录条目表格：行内菜单按权限位门控，行操作逻辑见 useEntryActions。 */
-const EntryTable = ({ page, me, onReload }: EntryTableProps) => {
+/** 右键上下文菜单定位（entry 为 null 表示空白区菜单）。 */
+type Ctx = { x: number; y: number; entry: Entry | null } | null
+
+/** 目录条目表格：行内菜单按权限位门控，行操作逻辑见 useEntryActions。
+ * 支持 Windows 风格右键菜单（行上 = 条目操作，空白处 = 新建/上传/刷新）。 */
+const EntryTable = ({ page, me, onReload, canCreateDir, canUpload, onNewDir, onUpload }: EntryTableProps) => {
   const navigate = useNavigate()
+  const [ctx, setCtx] = useState<Ctx>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const {
     modal,
     close,
@@ -38,92 +53,166 @@ const EntryTable = ({ page, me, onReload }: EntryTableProps) => {
   const entryId = (r: Entry) => (r.kind === 'file' ? r.file.id : r.directory.id)
   const entryName = (r: Entry) => (r.kind === 'file' ? r.file.name : r.directory.name)
 
+  const ctxItems: MenuProps['items'] = ctx
+    ? ctx.entry
+      ? ctx.entry.kind === 'file'
+        ? buildFileMenu(ctx.entry)
+        : buildDirMenu(ctx.entry)
+      : [
+          ...(canCreateDir ? [{ key: 'newdir', label: '新建目录', onClick: () => onNewDir?.() }] : []),
+          ...(canUpload ? [{ key: 'upload', label: '上传文件', onClick: () => onUpload?.() }] : []),
+          { key: 'refresh', label: '刷新', onClick: onReload },
+        ]
+    : []
+
+  // 打开菜单时：点按菜单外任意处 / Esc / 滚动 → 关闭
+  useEffect(() => {
+    if (!ctx) return
+    const closeIfOutside = (e: MouseEvent) => {
+      if (e.target instanceof Node && menuRef.current?.contains(e.target)) return
+      setCtx(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCtx(null)
+    }
+    const onScroll = () => setCtx(null)
+    window.addEventListener('mousedown', closeIfOutside, true)
+    window.addEventListener('contextmenu', closeIfOutside, true)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      window.removeEventListener('mousedown', closeIfOutside, true)
+      window.removeEventListener('contextmenu', closeIfOutside, true)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [ctx])
+
+  // 防止菜单超出视口底部
+  const menuHeight = (ctxItems?.length ?? 0) * 38 + 16
+  const menuTop = ctx ? Math.max(8, Math.min(ctx.y, window.innerHeight - menuHeight - 8)) : 0
+  const menuLeft = ctx ? Math.max(8, Math.min(ctx.x, window.innerWidth - 200)) : 0
+
   return (
     <>
-      <Table<Entry>
-        rowKey={entryId}
-        size="middle"
-        dataSource={page.children}
-        pagination={false}
-        onRow={(r) => ({
-          // 仅当点击目标在行内 DOM 中才导航：行内弹层（Dropdown 菜单 / Popconfirm /
-          // Select 等）挂载在 body 级 portal，其 React 合成事件会沿组件树冒泡到 <tr>，
-          // 但原生 target 不在行内，据此区分，避免点菜单项误触发整行跳转。
-          onClick: (e) => {
-            if (e.currentTarget.contains(e.target as Node) && r.kind === 'file') {
-              navigate(`/app/file/${r.file.id}`)
-            }
-          },
-          onDoubleClick: (e) => {
-            if (e.currentTarget.contains(e.target as Node) && r.kind === 'directory') {
-              navigate(`/app/files/${r.directory.id}`)
-            }
-          },
-          style: { cursor: 'pointer' },
-        })}
-        columns={[
-          {
-            title: '名称',
-            key: 'name',
-            render: (_, r) =>
-              r.kind === 'file' ? (
-                <span className="flex items-center gap-8px min-w-0">
-                  <FileIcon name={r.file.name} size={18} />
-                  <span className="truncate">{r.file.name}</span>
-                </span>
-              ) : (
-                <span className="flex items-center gap-8px min-w-0">
-                  <FolderIcon size={18} />
-                  <span className="truncate">{r.directory.name}</span>
-                </span>
+      <div
+        onContextMenu={(e) => {
+          // 行上的右键由 onRow 处理；此处只处理表格空白区
+          if (e.target instanceof Element && e.target.closest('tr')) return
+          e.preventDefault()
+          setCtx({ x: e.clientX, y: e.clientY, entry: null })
+        }}
+      >
+        <Table<Entry>
+          rowKey={entryId}
+          size="middle"
+          dataSource={page.children}
+          pagination={false}
+          onRow={(r) => ({
+            // 仅当点击目标在行内 DOM 中才导航：行内弹层（Dropdown 菜单 / Popconfirm /
+            // Select 等）挂载在 body 级 portal，其 React 合成事件会沿组件树冒泡到 <tr>，
+            // 但原生 target 不在行内，据此区分，避免点菜单项误触发整行跳转。
+            onClick: (e) => {
+              if (e.currentTarget.contains(e.target as Node) && r.kind === 'file') {
+                navigate(`/app/file/${r.file.id}`)
+              }
+            },
+            onDoubleClick: (e) => {
+              if (e.currentTarget.contains(e.target as Node) && r.kind === 'directory') {
+                navigate(`/app/files/${r.directory.id}`)
+              }
+            },
+            onContextMenu: (e) => {
+              if (!e.currentTarget.contains(e.target as Node)) return
+              e.preventDefault()
+              e.stopPropagation()
+              setCtx({ x: e.clientX, y: e.clientY, entry: r })
+            },
+            style: { cursor: 'pointer' },
+          })}
+          columns={[
+            {
+              title: '名称',
+              key: 'name',
+              render: (_, r) =>
+                r.kind === 'file' ? (
+                  <span className="flex items-center gap-8px min-w-0">
+                    <FileIcon name={r.file.name} size={18} />
+                    <span className="truncate">{r.file.name}</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-8px min-w-0">
+                    <FolderIcon size={18} />
+                    <span className="truncate">{r.directory.name}</span>
+                  </span>
+                ),
+            },
+            {
+              title: '大小',
+              key: 'size',
+              width: 100,
+              render: (_, r) => (r.kind === 'file' ? formatBytes(r.file.size) : '—'),
+            },
+            {
+              title: '更新时间',
+              key: 'time',
+              width: 150,
+              render: (_, r) =>
+                r.kind === 'file' ? formatTime(r.file.updated_at) : formatTime(r.directory.created_at),
+            },
+            {
+              title: '状态',
+              key: 'status',
+              width: 140,
+              render: (_, r) =>
+                r.kind === 'file' && r.lock ? (
+                  <Tag color="orange" icon={<LockOutlined />}>
+                    {r.lock.locked_by_name}
+                  </Tag>
+                ) : (
+                  <span className="text-12px text-#9CA3AF">—</span>
+                ),
+            },
+            {
+              title: '',
+              key: 'op',
+              width: 48,
+              render: (_, r) => (
+                <Dropdown
+                  menu={{ items: r.kind === 'file' ? buildFileMenu(r) : buildDirMenu(r) }}
+                  trigger={['click']}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<MoreOutlined />}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Dropdown>
               ),
-          },
-          {
-            title: '大小',
-            key: 'size',
-            width: 100,
-            render: (_, r) => (r.kind === 'file' ? formatBytes(r.file.size) : '—'),
-          },
-          {
-            title: '更新时间',
-            key: 'time',
-            width: 150,
-            render: (_, r) =>
-              r.kind === 'file' ? formatTime(r.file.updated_at) : formatTime(r.directory.created_at),
-          },
-          {
-            title: '状态',
-            key: 'status',
-            width: 140,
-            render: (_, r) =>
-              r.kind === 'file' && r.lock ? (
-                <Tag color="orange" icon={<LockOutlined />}>
-                  {r.lock.locked_by_name}
-                </Tag>
-              ) : (
-                <span className="text-12px text-#9CA3AF">—</span>
-              ),
-          },
-          {
-            title: '',
-            key: 'op',
-            width: 48,
-            render: (_, r) => (
-              <Dropdown
-                menu={{ items: r.kind === 'file' ? buildFileMenu(r) : buildDirMenu(r) }}
-                trigger={['click']}
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<MoreOutlined />}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </Dropdown>
-            ),
-          },
-        ]}
-      />
+            },
+          ]}
+        />
+      </div>
+
+      {ctx &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: 'fixed',
+              top: menuTop,
+              left: menuLeft,
+              zIndex: 1050,
+              borderRadius: tokens.radius.contextMenu,
+              boxShadow: tokens.shadow.contextMenu,
+              overflow: 'hidden',
+            }}
+          >
+            <Menu items={ctxItems} onClick={() => setCtx(null)} selectable={false} />
+          </div>,
+          document.body,
+        )}
 
       {modal?.type === 'rename' && (
         <RenameModal

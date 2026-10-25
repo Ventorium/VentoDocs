@@ -37,7 +37,7 @@ const LoginPage = () => {
   return (
     <div className="w-120 bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-8">
       <div className="text-center mb-8">
-        <h1 className="text-2xl font-bold text-dark">VentoKnowledge</h1>
+        <h1 className="text-2xl font-bold text-dark">VentoDocs</h1>
         <Text type="secondary">文档管理系统</Text>
       </div>
 

@@ -1,10 +1,13 @@
 export type AppConfig = {
   /** 目录发布域名（未配置时为 null，发布功能关闭） */
   publishDomain: string | null
+  /** 在线编辑器资源根（未部署时为 null，如 "/document"） */
+  editorBase: string | null
 }
 
 const defaultConfig: AppConfig = {
-  publishDomain: null
+  publishDomain: null,
+  editorBase: null,
 }
 
 let config: AppConfig = defaultConfig

@@ -1,6 +1,6 @@
 [package]
 name = "vk-app"
-description = "VentoKnowledge 可执行入口"
+description = "VentoDocs 可执行入口"
 edition.workspace = true
 version.workspace = true
 

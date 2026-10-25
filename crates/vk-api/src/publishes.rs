@@ -298,11 +298,6 @@ pub async fn public_preview(
     if !(fdir.id == root.id || fdir.path.starts_with(&root.path)) {
         return Err(ApiError::forbidden("超出发布范围"));
     }
-    let ext = files::ext_of(&file.name);
-    if vk_convert::is_supported(&ext) {
-        let snap = files::preview_current(&state, &file).await?;
-        return Ok(json_no_cache(&snap));
-    }
     files::deliver_current(&state, &file, false).await
 }
 

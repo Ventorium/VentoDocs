@@ -1,11 +1,11 @@
-# VentoKnowledge 项目规范
+# VentoDocs 项目规范
 
 > 适用范围：本仓库全部代码。与 `docs/01-architecture.md` 配套；冲突时以架构文档的决策为准。
 
 ## 1. 仓库结构
 
 ```
-VentoKnowledge/
+VentoDocs/
 ├── Cargo.toml                  # workspace（edition 2024）
 ├── rust-toolchain.toml         # stable
 ├── .gitignore

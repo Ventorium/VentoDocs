@@ -164,10 +164,18 @@ pub async fn restore(
     Ok(Json(dir))
 }
 
+/// 回收站目录项：目录信息 + 删除前的可读路径。
+#[derive(Serialize)]
+pub struct TrashedDirectory {
+    #[serde(flatten)]
+    pub directory: Directory,
+    pub original_path: String,
+}
+
 pub async fn list_trashed(
     State(state): State<AppState>,
     axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
-) -> Result<Json<Vec<Directory>>, ApiError> {
+) -> Result<Json<Vec<TrashedDirectory>>, ApiError> {
     // 回收站仅展示当前用户可恢复（或管理员）的目录
     let pool = state.db.pool();
     let all = Directories::list_trashed(pool).await?;
@@ -182,7 +190,24 @@ pub async fn list_trashed(
             out.push(d);
         }
     }
-    Ok(Json(out))
+    // 把 id 路径解析为可读名称路径
+    let mut chain_ids: Vec<Uuid> = Vec::new();
+    for d in &out {
+        chain_ids.extend(Directories::parse_id_path(&d.path));
+    }
+    let names = Directories::names_by_ids(pool, &chain_ids).await?;
+    let result: Vec<TrashedDirectory> = out
+        .into_iter()
+        .map(|d| {
+            let ids = Directories::parse_id_path(&d.path);
+            let parent_chain: Vec<Uuid> = ids.iter().take(ids.len().saturating_sub(1)).copied().collect();
+            TrashedDirectory {
+                original_path: Directories::render_id_path(&parent_chain, &names),
+                directory: d,
+            }
+        })
+        .collect();
+    Ok(Json(result))
 }
 
 /// 授权管理入口：管理员或目录创建者。

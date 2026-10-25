@@ -1,4 +1,4 @@
-# VentoKnowledge 架构设计
+# VentoDocs 架构设计
 
 > 版本：V1.1
 > 上游依据：《文档管理系统需求说明》V1.0（需求基线）、《VentoDocs 页面设计方案》（视觉与交互基线，见 docs/02-ui-design.md）
@@ -19,7 +19,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        浏览器（React SPA）                           │
-│  文件管理 │ 在线编辑器(Univer OSS) │ 分享/发布管理 │ 用户/权限管理      │
+│  文件管理 │ 在线编辑器(ranuts/document) │ 分享/发布管理 │ 用户/权限管理  │
 │  v2：AI 助手面板 / 智能体问答页                                       │
 └──────────────┬──────────────────────────────────────────────────────┘
                │ HTTPS（REST + SSE + 静态资源）
@@ -61,7 +61,7 @@
 | Web 框架 | axum 0.8 + tower | 单体二进制，中间件链做认证/审计 |
 | 数据库 | PostgreSQL 16 + sqlx（编译期检查） | 需求指定；迁移用 sqlx migrate |
 | 缓存/队列 | Redis 7 + redis-rs | 索引同步队列、分布式锁、热缓存、限流 |
-| 在线编辑 | Univer OSS（@univerjs/* 1.2.x） | 需求指定；格式矩阵以 POC-1 为准 |
+| 在线编辑 | ranuts/document（edit.chaxus.com，AGPL-3.0，纯前端 iframe 嵌入） | Univer（POC-1）的替代实现；可编辑 xlsx/csv/docx/pptx，只读 xls/xlsm/ods/doc/odt/rtf/ppt |
 | 内容检索/RAG | zvec-grep（Rust 引擎 `zg_engine`） | 需求指定；集成方式以 POC-2 为准 |
 | 前端 | Vite + React 19 + TypeScript（react-swc-ts 模板） | fe-init 流程生成 |
 | 前端基建 | pnpm + UnoCSS + zustand + ahooks + antd 5 | fe-init/fe-coding 约定 |
@@ -72,7 +72,7 @@
 ## 3. 代码组织（Rust workspace）
 
 ```
-VentoKnowledge/
+VentoDocs/
 ├── Cargo.toml                 # workspace
 ├── crates/
 │   ├── vk-core/               # 领域核心：纯逻辑，零 I/O，可独立单测
@@ -327,14 +327,16 @@ data/
 - **排序/筛选**：名称/时间/类型/大小排序，多条件组合走查询参数。
 - **文件名搜索（v1）**：`GET /api/v1/search?q=&limit=`（默认 100，上限 200）。命中条件：`name ILIKE '%q%'`（`%`/`_`/`\` 转义，`ESCAPE '\'`）**或** pg_trgm `similarity(name, q) > 0.1`；排序：前缀命中（`name ILIKE 'q%'`）优先 → 相似度降序 → 更新时间降序。返回字段含 `isPrefixMatch`（bool）与 `similarity`（0–1，两位小数），UI「匹配」列展示「前缀」或 `xx%`。可见范围与 §5.3 鉴权完全一致（仅返回有 READ_PREVIEW 的文件，管理员/创建者旁路同 Grants::resolve）。
 
-## 9. 在线 Office 编辑（Univer OSS）
+## 9. 在线 Office 编辑（ranuts/document）
 
-- 前端按 MIME 选择编辑器：xlsx → Univer Sheets；docx → Univer Docs；pptx → Univer Slides（**以 POC-1 验证的格式矩阵为准**；某格式不支持导入/导出时，该格式只给预览 + "暂不支持在线编辑"提示，不静默转换）。
-- 打开编辑：前端先 `POST /files/:id/lock`（或已持有锁/自己是锁定人）→ 拉取编辑数据（GET `/files/:id/edit-data`，按格式返回 Univer 数据或 Office 字节供前端插件导入）。
-- 保存：PUT `/files/:id/edit-save` 携带 `base_version` + 前端导出的文件字节（xlsx/docx/pptx）→ 统一走 §6 `FileWriter.save`。
-- 并发：`base_version` 乐观锁；冲突时前端弹出版本对比提示（"文件已被更新"，可选择放弃/覆盖为我的内容需再次确认）。
-- 编辑会话心跳：编辑期间每 30s 上报 `heartbeat`，仅用于 UI 显示"谁在编辑"，不改变锁语义（锁持久）。
-- 保真度兜底：POC-1 若发现某格式往返丢失结构（公式/图表/复杂样式），该格式默认"预览 + 导出前提示"，并记录在部署文档。
+- **编辑器选型**：[ranuts/document](https://github.com/ranuts/document)（edit.chaxus.com，AGPL-3.0，基于 OnlyOffice Docs 构建）。纯前端静态资源，通过 postMessage 嵌入协议以**同源 iframe** 嵌入，**无编辑器服务端、无格式转换服务**。替代方案 Univer OSS 的评估记录见 `docs/poc/univer-matrix.md`（POC-1，历史文档）。
+- **资产部署**：`scripts/fetch-editor.sh` 从官方镜像（`ghcr.io/ranuts/document`）提取 `/public` 静态资源（约 270MB）到 `VENTO_EDITOR_DIST` 目录（默认 `editor-dist/`，gitignore，不入仓库）；本服务以 `/document/**` 路由直接供静态文件（前缀固定为 `/document`：编辑器自身按 pathname 识别部署前缀，仅支持站点根 `/` 或 `/document/`，其他前缀会导致其资源定位失败）。编辑器为 Vite SPA 壳（`index.html`），壳内再经 DocsAPI 加载二级子应用 iframe（`web-apps/apps/*editor/`），文档渲染在二级 iframe 的 canvas 上。启动时目录缺失 `index.html` 则自动降级：`/document` 返回 404 JSON（`EDITOR_NOT_DEPLOYED`），`/_env` 返回 `editorBase: null`，前端预览区显示"在线编辑器未部署，请下载后查看"。
+- **跨源隔离（SharedArrayBuffer / WASM 前置条件）**：顶层 SPA 页面响应 `Cross-Origin-Opener-Policy: same-origin`；`/document/**` 文档响应 `COOP: same-origin + COEP: require-corp`（无缓存）。编辑器 iframe 与 SPA 同源，WASM 所需的交叉隔离环境由该组合满足。`/document/assets/**` 与字体 `Cache-Control: immutable`（一年）；字体转换 WASM（`x2t.wasm.br`）以 `Content-Encoding: br` 返回。
+- **格式范围**：可编辑 = xlsx / docx / pptx / csv；只读 = xls / xlsm / ods / doc / odt / rtf / ppt。前端按扩展名分发，其余类型走图片/PDF/文本/下载兜底。公开分享/发布页一律只读。
+- **打开/编辑**：进入编辑先 `POST /files/:id/lock`（或已持有锁）→ 父窗口用自身 token `GET /files/:id/content` 取原始字节 → postMessage `document:open-buffer { fileName, buffer, readonly }` 交 iframe 打开；iframe 回报 `document:ready` / `document:opened` / `document:dirty-changed { dirty }`。
+- **保存**：dirty 状态才允许保存 → `document:save` → iframe 回报 `document:saved { file, dirty }`（默认按打开格式导出；保存期间有编辑则 `dirty=true`）→ 父窗口 multipart `POST /files/:id/save`（`file` + `base_version` + 可选 `note`），统一走 §6 版本化保存（MODIFY_RENAME 权限 + 锁前置检查 + `encoding=office`）。若返回仍 `dirty`，以新 `current_version` 为基线**有界重存一次**（防止导出期间编辑丢失）；全部成功后退出编辑、刷新详情。
+- **并发**：`base_version` 乐观锁；409 → 前端弹"版本冲突"确认框（重新加载最新版本 / 继续编辑），重新加载 = 取最新字节重载 iframe，未保存编辑按确认框明示丢弃。
+- **许可证边界**：ranuts/document 为 AGPL-3.0，**原样分发官方构建**，在独立同源 iframe 文档中运行，不与 VentoDocs 前端代码混合，不做二次修改；VentoDocs 保持自部署（部署方运行该 AGPL 组件，义务由部署方按 AGPL-3.0 承担，见 README「在线编辑器许可证」）。
 
 ## 10. 分享（§9）
 
@@ -457,6 +459,7 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 | `VIENTO_LLM_BASE_URL/KEY/MODEL` | 空=禁用 Agent | OpenAI 兼容 |
 | `VIENTO_ZVEC_EMBEDDING` | 引擎默认本地模型 | 可指定模型标识 |
 | `VIENTO_BIND_ADDR` | `0.0.0.0:8080` | 监听地址 |
+| `VENTO_EDITOR_DIST` | `editor-dist` | 在线编辑器静态资源目录（`scripts/fetch-editor.sh` 拉取，需含 `index.html`；缺失时编辑器降级禁用，§9） |
 
 配置经环境变量；`docker compose` 与二进制部署使用同一套变量（§2.2 一致性）。
 
@@ -486,7 +489,7 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 | 5 | 版本保留 | 默认每文件 20 版，可配；清理为后台任务；对象引用计数回收 |
 | 6 | 分享默认 | 有效期 7 天、不限次数、无密码、允许下载（创建时可改） |
 | 7 | 发布域名/认证 | 环境变量配置；未配置=功能禁用；默认匿名只读，可配需登录 |
-| 8 | Univer 格式范围 | POC-1 后定案，降级策略见 §9（P1 实施前完成） |
+| 8 | 在线编辑器格式范围 | POC-1 评估 Univer → 改用 ranuts/document：可编辑 xlsx/csv/docx/pptx，只读 xls/xlsm/ods/doc/odt/rtf/ppt（§9） |
 | 9 | zvec-grep 集成 | **推迟 v2**；v1 仅 PG 文件名/元数据搜索。v2 时 POC-2 定案，倾向进程内库，后备守护进程（§12.2） |
 | 10 | Agent 模型/工具/交互 | **推迟 v2**；设计见 §13。v1 权限位 AGENT_* 保留不启用 |
 | 11 | 日志/审计 | 7 类别、365 天保留可配、管理界面筛选+CSV 导出 |
@@ -498,7 +501,7 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 |---|---|---|
 | M0 | 仓库骨架、CI、docker-compose（PG/Redis）、配置、迁移、认证与用户管理 API、前端脚手架与全局框架 | — |
 | M1 | 文件管理核心：目录树、文件 CRUD、上传/下载/预览、ACL、锁定、版本、回收站、审计、文件名搜索 | M0 |
-| M2 | 在线 Office 编辑（Univer OSS：POC-1 通过后按格式矩阵接入） | POC-1 |
+| M2 | 在线 Office 编辑（ranuts/document 同源 iframe 嵌入：xlsx/csv/docx/pptx 可编辑、旧格式只读，保存生成新版本） | POC-1 |
 | M3 | 文件分享 + 目录网站发布 | M1 |
 | v2 | 全文/向量检索（zvec-grep，POC-2）、文档页 Agent、全应用 RAG Agent | POC-2 + M1 |
 

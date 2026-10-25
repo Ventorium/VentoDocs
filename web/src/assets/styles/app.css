@@ -4,6 +4,81 @@
   box-sizing: border-box;
 }
 
+/* ============================================================
+   VentoDocs 设计变量（P1：与 web/src/theme.ts 的 token 表同步）
+   浅色为默认；深色由 <html data-theme="dark"> 切换。
+   ============================================================ */
+:root,
+:root[data-theme='light'] {
+  --vd-bg-surface: rgba(255, 255, 255, 0.72);
+  --vd-bg-surface-hover: rgba(255, 255, 255, 0.85);
+  --vd-bg-overlay: rgba(255, 255, 255, 0.9);
+  --vd-bg-topbar: rgba(242, 242, 244, 0.62);
+  --vd-bg-item-hover: rgba(0, 0, 0, 0.07);
+  --vd-bg-input: rgba(0, 0, 0, 0.05);
+  --vd-bg-selection: rgba(0, 122, 255, 0.15);
+  --vd-text-primary: #1d1d1f;
+  --vd-text-secondary: #6e6e73;
+  --vd-text-tertiary: #aeaeb2;
+  --vd-border-default: rgba(0, 0, 0, 0.08);
+  --vd-border-subtle: rgba(0, 0, 0, 0.04);
+  --vd-border-strong: rgba(0, 0, 0, 0.15);
+  --vd-accent: #007aff;
+  --vd-accent-success: #34c759;
+  --vd-accent-warning: #ff9500;
+  --vd-accent-danger: #ff3b30;
+  --vd-accent-info: #5ac8fa;
+  --vd-radius-panel: 10px;
+  --vd-radius-card: 12px;
+  --vd-radius-control: 8px;
+  --vd-radius-button: 6px;
+  --vd-shadow-panel: 0 4px 20px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.08);
+  --vd-shadow-overlay: 0 20px 56px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15);
+  --vd-shadow-context-menu: 0 12px 36px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.12);
+  --vd-bg-page: rgba(255, 255, 255, 0.82);
+  --vd-blur-surface: 32px;
+  --vd-blur-overlay: 48px;
+  --vd-ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --vd-bg-surface: rgba(34, 34, 36, 0.2);
+  --vd-bg-surface-hover: rgba(50, 50, 52, 0.82);
+  --vd-bg-overlay: rgba(24, 24, 26, 0.88);
+  --vd-bg-topbar: rgba(18, 18, 20, 0.68);
+  --vd-bg-item-hover: rgba(255, 255, 255, 0.09);
+  --vd-bg-input: rgba(255, 255, 255, 0.07);
+  --vd-bg-selection: rgba(10, 132, 255, 0.25);
+  --vd-text-primary: #dcdcdc;
+  --vd-text-secondary: #a1a1a6;
+  --vd-text-tertiary: #8f8f8f;
+  --vd-border-default: rgba(255, 255, 255, 0.1);
+  --vd-border-subtle: rgba(255, 255, 255, 0.05);
+  --vd-border-strong: rgba(255, 255, 255, 0.18);
+  --vd-accent: #0a84ff;
+  --vd-accent-success: #30d158;
+  --vd-accent-warning: #ff9f0a;
+  --vd-accent-danger: #ff453a;
+  --vd-accent-info: #64d2ff;
+  --vd-shadow-panel: 0 4px 20px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.3);
+  --vd-shadow-overlay: 0 20px 56px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --vd-shadow-context-menu: 0 12px 36px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --vd-bg-page: rgba(28, 28, 30, 0.74);
+  color-scheme: dark;
+}
+
+/* 桌面风内容卡片：半透明毛玻璃，壁纸存在时桌面背景从四周透出 */
+.vd-page {
+  background: var(--vd-bg-page);
+  -webkit-backdrop-filter: blur(var(--vd-blur-surface)) saturate(130%);
+  backdrop-filter: blur(var(--vd-blur-surface)) saturate(130%);
+  border: 1px solid var(--vd-border-default);
+  border-radius: var(--vd-radius-card);
+  box-shadow: var(--vd-shadow-panel);
+  padding: 20px;
+}
+
 /* 全局滚动条样式 */
 * {
   scrollbar-width: thin;

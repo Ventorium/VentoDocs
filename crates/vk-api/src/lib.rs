@@ -10,6 +10,7 @@ pub mod error;
 pub mod files;
 pub mod publishes;
 pub mod search;
+pub mod settings;
 pub mod shares;
 pub mod teams;
 pub mod users;
@@ -18,13 +19,17 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
+use axum::http::HeaderMap;
 use axum::middleware;
+use axum::response::Response;
 use axum::routing::{delete, get, post};
+use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use vk_store::Db;
 use vk_store::object_store::ObjectStore;
+use vk_store::repo::audit;
 
 /// 运行时配置（来自环境变量，见 .env.example）。
 #[derive(Clone)]
@@ -35,6 +40,10 @@ pub struct Config {
     pub trash_retention_days: u32,
     pub version_keep: u32,
     pub publish_domain: Option<String>,
+    /// 在线编辑器静态资源目录（`VENTO_EDITOR_DIST`，默认 `editor-dist`，相对进程 CWD）。
+    pub editor_dist: std::path::PathBuf,
+    /// 编辑器目录就绪（含 index.html）；false 时前端不展示编辑功能。
+    pub editor_available: bool,
 }
 
 impl Config {
@@ -53,6 +62,22 @@ impl Config {
             publish_domain: std::env::var("VIENTO_PUBLISH_DOMAIN")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            editor_dist: std::env::var("VENTO_EDITOR_DIST")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("editor-dist")),
+            editor_available: false,
+        })
+        .map(|mut c| {
+            c.editor_available = c.editor_dist.join("index.html").is_file();
+            if !c.editor_available {
+                tracing::warn!(
+                    dir = %c.editor_dist.display(),
+                    "在线编辑器资源目录缺失（index.html 不存在），编辑功能已禁用；运行 scripts/fetch-editor.sh 拉取"
+                );
+            }
+            c
         })
     }
 }
@@ -70,6 +95,26 @@ pub struct AppState {
     pub db: Db,
     pub objects: ObjectStore,
     pub cfg: Arc<Config>,
+}
+
+/// 客户端 IP 中间件：解析 X-Forwarded-For（取首跳）→ X-Real-IP → TCP 对端地址，
+/// 写入审计上下文（`vk_store::repo::audit::scope_client_ip`），审计日志自动记录。
+async fn attach_client_ip(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    req: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
+        .map(str::to_string)
+        .unwrap_or_else(|| peer.ip().to_string());
+    audit::scope_client_ip(Some(ip), next.run(req)).await
 }
 
 /// 组装完整路由：公开端点 + 需认证端点 + CORS。
@@ -157,12 +202,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/directories/{id}/files", post(files::upload))
         .route("/api/v1/files/{id}", get(files::meta).delete(files::trash))
         .route("/api/v1/files/{id}/content", get(files::content))
-        .route(
-            "/api/v1/files/{id}/univer-preview",
-            get(files::univer_preview),
-        )
         .route("/api/v1/files/{id}/save", post(files::save))
-        .route("/api/v1/files/{id}/univer-save", post(files::univer_save))
         .route("/api/v1/files/{id}/lock", post(files::lock))
         .route("/api/v1/files/{id}/unlock", post(files::unlock))
         .route("/api/v1/files/{id}/restore", post(files::restore))
@@ -189,6 +229,11 @@ pub fn router(state: AppState) -> Router {
         )
         // 文件名搜索（§9）
         .route("/api/v1/search", get(search::search))
+        // 用户设置（桌面外观，§P1）
+        .route(
+            "/api/v1/settings/desktop",
+            get(settings::get_desktop).put(settings::put_desktop),
+        )
         .route("/api/v1/audits", get(audits::list))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -200,6 +245,7 @@ pub fn router(state: AppState) -> Router {
         .merge(protected)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(attach_client_ip))
         .with_state(state)
 }
 
@@ -211,5 +257,8 @@ async fn health() -> &'static str {
 async fn env_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "publishDomain": state.cfg.publish_domain,
+        // 编辑器以 base:'./' 相对引用构建，文档 URL 必须带尾斜杠，
+        // 相对资源（./sdkjs/...）才能解析到 /document/ 之下
+        "editorBase": if state.cfg.editor_available { Some("/document/") } else { None },
     }))
 }

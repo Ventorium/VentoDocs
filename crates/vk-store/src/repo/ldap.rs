@@ -63,9 +63,10 @@ impl LdapConfig {
             Some((h, p)) => (h, Some(p)),
             None => (stripped, None),
         };
-        let port = port_env
+        let default_port = env_str("VIENTO_LDAP_PORT")
             .and_then(|p| p.parse().ok())
             .unwrap_or(if is_ldaps { 636 } else { 389 });
+        let port = port_env.and_then(|p| p.parse().ok()).unwrap_or(default_port);
         Some(Self {
             host: host.to_string(),
             port,

@@ -1,6 +1,6 @@
 [package]
 name = "vk-store"
-description = "VentoKnowledge 数据访问层：sqlx + PostgreSQL + 本地对象存储"
+description = "VentoDocs 数据访问层：sqlx + PostgreSQL + 本地对象存储"
 edition.workspace = true
 version.workspace = true
 

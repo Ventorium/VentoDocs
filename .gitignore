@@ -23,3 +23,6 @@ data/
 
 # 构建标记（vite build 自动生成）
 web/public/_info
+
+# 在线编辑器静态资源（scripts/fetch-editor.sh 拉取，约 460MB）
+editor-dist/

@@ -6,7 +6,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::Json;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -499,7 +499,7 @@ async fn load_share_file(
     Ok((share, file))
 }
 
-/// 公开预览：Office/CSV → Univer 快照 JSON；其余类型回原始字节（inline）。
+/// 公开预览：统一回原始字节（inline）；Office/CSV 由前端内置编辑器渲染。
 pub async fn public_preview(
     State(state): State<AppState>,
     Path((token, file_id)): Path<(String, Uuid)>,
@@ -520,11 +520,6 @@ pub async fn public_preview(
         None,
     )
     .await;
-    let ext = files::ext_of(&file.name);
-    if vk_convert::is_supported(&ext) {
-        let snap = files::preview_current(&state, &file).await?;
-        return Ok(Json(snap).into_response());
-    }
     files::deliver_current(&state, &file, false).await
 }
 

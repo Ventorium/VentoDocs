@@ -14,6 +14,7 @@ import {
 import { saveAs } from 'file-saver'
 import { client, fetchFileContent } from '@/api'
 import { msg } from '@/components/GlobalMessage'
+import { EDITOR_EDITABLE_EXT, EDITOR_READONLY_EXT } from '@/components/DocEditor'
 import FileIcon from '@/components/FileIcon'
 import StateView from '@/components/StateView'
 import VersionsDrawer from '@/components/VersionsDrawer'
@@ -22,9 +23,6 @@ import { hasPerm, PERM } from '@/lib/perm'
 import { useAuth } from '@/store/useAuth'
 import FilePreview from './components/FilePreview'
 import ShareModal from '@/pages/app/files/components/ShareModal'
-
-/** 支持在线编辑的扩展名（其余类型只读预览）。 */
-const EDITABLE_EXT = new Set(['xlsx', 'docx'])
 
 /** 文件详情页：元数据 + 锁定状态 + 预览 + 在线编辑 + 下载 + 版本历史。 */
 const FileDetailPage = () => {
@@ -63,9 +61,11 @@ const FileDetailPage = () => {
   const ext = file?.name.includes('.')
     ? ((file.name.split('.').pop() ?? '').toLowerCase() as string)
     : ''
-  const canEdit = hasPerm(perms, PERM.MODIFY_RENAME) && EDITABLE_EXT.has(ext)
+  const canEdit = hasPerm(perms, PERM.MODIFY_RENAME) && EDITOR_EDITABLE_EXT.has(ext)
   /** 编辑入口：有修改权限且文件未被他人锁定。 */
   const canEnterEdit = canEdit && (!lock || isLockOwner)
+  /** 是否走在线编辑器（可编辑或只读），编辑器文件撑满剩余视口。 */
+  const isEditorFile = EDITOR_EDITABLE_EXT.has(ext) || EDITOR_READONLY_EXT.has(ext)
 
   const doDownload = async () => {
     if (!file) return
@@ -153,7 +153,7 @@ const FileDetailPage = () => {
           : 'ready'
 
   return (
-    <div className="flex flex-col gap-12px">
+    <div className="flex min-h-0 flex-1 flex-col gap-12px">
       <div className="flex items-center justify-between gap-12px">
         <div className="flex min-w-0 items-center gap-8px">
           <Button
@@ -223,7 +223,7 @@ const FileDetailPage = () => {
         errorText={error && error.message !== 'no-perm' ? error.message : undefined}
       >
         {file && (
-          <div className="flex flex-col gap-12px">
+          <div className="flex min-h-0 flex-1 flex-col gap-12px">
             {lock && (
               <Alert
                 type="warning"
@@ -237,7 +237,11 @@ const FileDetailPage = () => {
               <span>创建时间：{formatDateTime(file.created_at)}</span>
               <span>更新时间：{formatDateTime(file.updated_at)}</span>
             </div>
-            <div className="rounded-8px border-1px border-#E5E7EB bg-white p-16px">
+            <div
+              className={`rounded-8px border-1px border-#E5E7EB bg-white p-16px${
+                isEditorFile ? ' flex min-h-0 flex-1 flex-col' : ''
+              }`}
+            >
               <FilePreview
                 file={file}
                 onDownload={doDownload}
@@ -247,6 +251,7 @@ const FileDetailPage = () => {
                   setEditing(false)
                   refresh()
                 }}
+                onReload={refresh}
               />
             </div>
           </div>
