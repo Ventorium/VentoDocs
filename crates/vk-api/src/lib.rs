@@ -168,7 +168,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/{id}", get(users::get).patch(users::update))
         .route("/api/v1/users/{id}/password", post(users::set_password))
         .route("/api/v1/users/ldap/import", post(users::import_ldap))
-        .route("/api/v1/users/ldap/config", get(users::ldap_config))
+        .route(
+            "/api/v1/users/ldap/config",
+            get(users::ldap_config).put(users::save_ldap_config).delete(users::delete_ldap_config),
+        )
+        .route("/api/v1/users/ldap/test", post(users::test_ldap))
         .route("/api/v1/teams", get(teams::list).post(teams::create))
         .route(
             "/api/v1/teams/{id}",

@@ -132,16 +132,60 @@ export type AuditEntry = {
   ip: string | null
 }
 
-/** LDAP 连接配置摘要（GET /users/ldap/config，不含密码）。 */
+/** LDAP 连接配置（GET /users/ldap/config，不含密码明文）。
+ *  source: 'database' = 系统设置中保存的在线配置；'env' = 环境变量 VIENTO_LDAP_* 回退。 */
 export type LdapConfigInfo = {
+  source: 'database' | 'env'
   host: string
   port: number
   startTls: boolean
   baseDn: string
+  bindDn?: string
+  bindDnSet?: boolean
+  passwordSet?: boolean
   userFilter: string
   attrUsername: string
   attrName: string
   attrEmail: string
+}
+
+/** LDAP 在线配置保存请求（PUT /users/ldap/config）。
+ *  bindPassword 缺省/空 = 沿用已有密码，不覆盖。 */
+export type LdapConfigUpdate = {
+  host: string
+  port: number
+  startTls: boolean
+  baseDn: string
+  bindDn: string
+  bindPassword?: string
+  userFilter: string
+  attrUsername: string
+  attrName: string
+  attrEmail: string
+}
+
+/** LDAP 连接测试结果（POST /users/ldap/test，始终 200，看 ok 字段）。 */
+export type LdapTestResult = {
+  ok: boolean
+  entries?: number
+  sample?: string[]
+  error?: string
+}
+
+/** LDAP 连接测试请求：全部字段可选。
+ *  host 省略（发 `{}`）= 测试当前生效配置；host 有值 = 用表单值测试（保存前测试）。
+ *  bindPassword 留空 = 沿用已有密码（库中或环境变量）。 */
+export type LdapTestReq = {
+  host?: string
+  port?: number
+  startTls?: boolean
+  baseDn?: string
+  bindDn?: string
+  bindPassword?: string
+  userFilter?: string
+  attrUsername?: string
+  attrName?: string
+  attrEmail?: string
 }
 
 /** LDAP 导入结果（POST /users/ldap/import，无请求体）。 */
@@ -438,6 +482,7 @@ export type OpenAPIs = {
     '/api/v1/users/{id}/password': { query: any; params: IdParams; body: SetPasswordReq; headers: any; response: OkResp }
     // LDAP 导入无请求体（配置全部来自服务端环境变量）
     '/api/v1/users/ldap/import': { query: any; params: any; body: any; headers: any; response: LdapImportResult }
+    '/api/v1/users/ldap/test': { query: any; params: any; body: LdapTestReq; headers: any; response: LdapTestResult }
     '/api/v1/teams': { query: any; params: any; body: CreateTeamReq; headers: any; response: Team }
     '/api/v1/teams/{team_id}/members': { query: any; params: TeamIdParams; body: AddMemberReq; headers: any; response: Team }
     '/api/v1/directories': { query: any; params: any; body: CreateDirReq; headers: any; response: Directory }
@@ -461,6 +506,7 @@ export type OpenAPIs = {
   put: {
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: SetGrantReq; headers: any; response: { ok: boolean; perms: number } }
     '/api/v1/settings/desktop': { query: any; params: any; body: Partial<DesktopSettings>; headers: any; response: DesktopSettings }
+    '/api/v1/users/ldap/config': { query: any; params: any; body: LdapConfigUpdate; headers: any; response: LdapConfigInfo }
   }
   patch: {
     '/api/v1/users/{id}': { query: any; params: IdParams; body: UpdateUserReq; headers: any; response: User }
@@ -474,5 +520,6 @@ export type OpenAPIs = {
     '/api/v1/files/{id}': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/files/{id}/purge': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
+    '/api/v1/users/ldap/config': { query: any; params: any; body: any; headers: any; response: { ok: boolean; deleted: boolean } }
   }
 }
