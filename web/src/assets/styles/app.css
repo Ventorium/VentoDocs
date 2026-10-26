@@ -735,3 +735,354 @@
 .ant-notification {
   z-index: 9700 !important;
 }
+
+/* ============================================================
+   M4：全局搜索面板（Spotlight）
+   ============================================================ */
+.vd-search-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 8900;
+  background: rgba(10, 12, 18, 0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.vd-search-panel {
+  position: absolute;
+  top: 16vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 640px;
+  max-width: 92vw;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--vd-bg-overlay);
+  -webkit-backdrop-filter: blur(var(--vd-blur-overlay)) saturate(140%);
+  backdrop-filter: blur(var(--vd-blur-overlay)) saturate(140%);
+  border: 1px solid var(--vd-border-default);
+  border-radius: var(--vd-radius-card);
+  box-shadow: var(--vd-shadow-overlay);
+  overflow: hidden;
+  animation: vd-win-open 0.16s var(--vd-ease-standard);
+}
+
+.vd-search-inputrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--vd-border-default);
+}
+
+.vd-search-inputicon {
+  font-size: 18px;
+  color: var(--vd-accent);
+}
+
+.vd-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--vd-text-primary);
+  font-size: 16px;
+}
+
+.vd-search-input::placeholder {
+  color: var(--vd-text-tertiary);
+}
+
+.vd-search-kbd {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--vd-border-default);
+  color: var(--vd-text-secondary);
+  background: var(--vd-bg-input);
+}
+
+.vd-search-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.vd-search-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--vd-text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.vd-search-empty-sub {
+  color: var(--vd-text-tertiary);
+  font-size: 12px;
+}
+
+.vd-search-hit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.vd-search-hit.on {
+  background: var(--vd-bg-selection);
+}
+
+.vd-search-hit-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.vd-search-hit-name {
+  font-size: 13px;
+  color: var(--vd-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vd-search-hit.on .vd-search-hit-name {
+  color: var(--vd-accent);
+}
+
+.vd-search-hit-meta {
+  font-size: 11px;
+  color: var(--vd-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vd-search-hit-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--vd-bg-selection);
+  color: var(--vd-accent);
+}
+
+/* ============================================================
+   M4：通知中心
+   ============================================================ */
+.vd-notif-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vd-notif-panel {
+  width: 340px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+}
+
+.vd-notif-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--vd-border-default);
+}
+
+.vd-notif-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--vd-text-tertiary);
+}
+
+.vd-notif-list {
+  overflow-y: auto;
+  max-height: 320px;
+  padding: 4px;
+}
+
+.vd-notif-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.vd-notif-item:hover {
+  background: var(--vd-bg-item-hover);
+}
+
+.vd-notif-ico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--vd-bg-input);
+  flex-shrink: 0;
+}
+
+.vd-notif-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.vd-notif-text {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.vd-notif-time {
+  font-size: 11px;
+  color: var(--vd-text-tertiary);
+  margin-top: 2px;
+}
+
+.vd-notif-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--vd-text-tertiary);
+  font-size: 12px;
+}
+
+.vd-notif-foot {
+  padding: 8px 14px;
+  border-top: 1px solid var(--vd-border-default);
+  text-align: right;
+  font-size: 12px;
+}
+
+.vd-notif-foot a {
+  color: var(--vd-accent);
+  cursor: pointer;
+}
+
+/* ============================================================
+   M4：壁纸快捷选择器（桌面右键 → 切换壁纸…）
+   ============================================================ */
+.vd-wp-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 9400;
+  background: rgba(10, 12, 18, 0.45);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vd-wp-picker {
+  width: 580px;
+  max-width: 92vw;
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--vd-bg-overlay);
+  -webkit-backdrop-filter: blur(var(--vd-blur-overlay)) saturate(140%);
+  backdrop-filter: blur(var(--vd-blur-overlay)) saturate(140%);
+  border: 1px solid var(--vd-border-default);
+  border-radius: var(--vd-radius-card);
+  box-shadow: var(--vd-shadow-overlay);
+  animation: vd-win-open 0.16s var(--vd-ease-standard);
+}
+
+.vd-wp-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.vd-wp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.vd-wp-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  background: var(--vd-bg-input);
+}
+
+.vd-wp-thumb:hover {
+  border-color: var(--vd-border-strong);
+}
+
+.vd-wp-thumb.on {
+  border-color: var(--vd-accent);
+}
+
+.vd-wp-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.vd-wp-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+}
+
+.vd-wp-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--vd-text-tertiary);
+  font-size: 13px;
+}
+
+/* ============================================================
+   M4：窗口焦点强调 + 关闭幽灵动画 + 桌面图标拖拽
+   ============================================================ */
+.vd-win-focused {
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.45),
+    0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+@keyframes vd-win-close {
+  to {
+    opacity: 0;
+    transform: scale(0.965);
+  }
+}
+
+.vd-win-ghost {
+  animation: vd-win-close 0.2s ease-in forwards;
+  pointer-events: none;
+}
+
+.vd-icon {
+  transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.vd-icon.dragging {
+  opacity: 0.35;
+}
+
+.vd-icon.dropover {
+  border-color: var(--vd-accent);
+  background: var(--vd-bg-selection);
+}

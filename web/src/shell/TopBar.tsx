@@ -3,10 +3,11 @@
  */
 import { useEffect, useState } from 'react'
 import { Dropdown, type MenuProps } from 'antd'
-import { AppstoreOutlined, LogoutOutlined, SettingOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, LogoutOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { useWindows } from '@/kernel/window/store'
 import { useAuth } from '@/store/useAuth'
 import { APPS } from './apps/registry'
+import NotificationsBell from './NotificationsBell'
 
 function Clock() {
   const [now, setNow] = useState(() => new Date())
@@ -24,8 +25,10 @@ function Clock() {
 
 export default function TopBar({
   onLaunch,
+  onSearch,
 }: {
   onLaunch: (appId: string, appState?: Record<string, string>) => void
+  onSearch: () => void
 }) {
   const windows = useWindows((s) => s.windows)
   const { user, logout } = useAuth()
@@ -73,6 +76,10 @@ export default function TopBar({
             {windows.length > 0 && <span className="vd-tb-count">{windows.length}</span>}
           </button>
         </Dropdown>
+        <button type="button" className="vd-tb-btn" title="搜索 (Ctrl+K)" onClick={onSearch}>
+          <SearchOutlined />
+        </button>
+        {user && <NotificationsBell onOpenAudits={() => onLaunch('audits')} />}
         <button type="button" className="vd-tb-btn" title="系统设置" onClick={() => onLaunch('settings')}>
           <SettingOutlined />
         </button>

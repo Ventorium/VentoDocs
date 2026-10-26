@@ -8,6 +8,7 @@ pub mod auth;
 pub mod directories;
 pub mod error;
 pub mod files;
+pub mod notifications;
 pub mod publishes;
 pub mod search;
 pub mod settings;
@@ -239,6 +240,7 @@ pub fn router(state: AppState) -> Router {
             get(settings::get_desktop).put(settings::put_desktop),
         )
         .route("/api/v1/audits", get(audits::list))
+        .route("/api/v1/notifications", get(notifications::list))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

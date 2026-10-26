@@ -7,7 +7,7 @@ import { BorderOuterOutlined, CloseOutlined, MinusOutlined } from '@ant-design/i
 import { TOPBAR_H, useWindows } from '@/kernel/window/store'
 import { appMeta } from '@/shell/apps/manifest'
 
-type Props = { id: string; z: number; children: ReactNode }
+type Props = { id: string; z: number; focused?: boolean; children: ReactNode }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
@@ -22,7 +22,7 @@ const HANDLES: [string, React.CSSProperties, string][] = [
   ['se', { bottom: 0, right: 0, width: 10, height: 10 }, 'nwse-resize'],
 ]
 
-export default function WindowFrame({ id, z, children }: Props) {
+export default function WindowFrame({ id, z, focused, children }: Props) {
   const win = useWindows((s) => s.windows.find((w) => w.id === id))
   const dragging = useWindows((s) => s.dragging)
   const [interacting, setInteracting] = useState(false)
@@ -135,7 +135,7 @@ export default function WindowFrame({ id, z, children }: Props) {
     <div
       className={`vd-window${win.maximized ? ' vd-win-max' : ''}${win.minimized ? ' vd-win-min' : ''}${
         dragging || interacting ? ' vd-win-nodrag' : ''
-      }`}
+      }${focused ? ' vd-win-focused' : ''}`}
       style={{ left: x, top: y, width: w, height: h, zIndex: z }}
       onMouseDown={() => useWindows.getState().focus(id)}
       onContextMenu={(e) => e.stopPropagation()}

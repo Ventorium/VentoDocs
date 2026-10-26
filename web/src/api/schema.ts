@@ -309,6 +309,12 @@ export type SearchQuery = {
   limit?: number
 }
 
+// ---------------- M4：通知中心 ----------------
+
+export type NotificationQuery = {
+  limit?: number
+}
+
 export type SearchHit = {
   /** 所属目录面包屑路径（" / " 连接，根目录显示"根目录"） */
   directoryPath: string
@@ -460,6 +466,7 @@ export type OpenAPIs = {
     '/api/v1/teams': { query: any; params: any; body: any; headers: any; response: Team[] }
     '/api/v1/teams/{team_id}': { query: any; params: TeamIdParams; body: any; headers: any; response: TeamDetail }
     '/api/v1/audits': { query: AuditListQuery; params: any; body: any; headers: any; response: AuditEntry[] }
+    '/api/v1/notifications': { query: NotificationQuery; params: any; body: any; headers: any; response: AuditEntry[] }
     '/api/v1/directories/root': { query: any; params: any; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}': { query: any; params: IdParams; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: any; headers: any; response: { grants: GrantItem[] } }
