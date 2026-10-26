@@ -306,7 +306,13 @@ pub async fn save_ldap_config(
                 .map_err(ApiError::bad_request)?,
         )
     } else {
-        current.and_then(|r| r.bind_password)
+        // 留空 = 沿用已有密码：库中值优先，无库行时回退环境变量（与测试端一致）。
+        current.and_then(|r| r.bind_password).or_else(|| {
+            vk_store::repo::ldap::LdapConfig::from_env()
+                .map(|c| c.bind_password)
+                .filter(|p| !p.is_empty())
+                .and_then(|p| vk_store::repo::ldap::encrypt_secret(&key, &p).ok())
+        })
     };
     let cfg = body.to_config(String::new());
     vk_store::repo::ldap::save_ldap_config(pool, &cfg, password_hex.as_deref())

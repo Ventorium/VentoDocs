@@ -626,3 +626,112 @@
     background: rgba(255, 255, 255, 0.5);
   }
 }
+
+/* ============================================================
+   M3：VentoOS 风格登录页
+   登录页始终使用深色玻璃卡片（背景为壁纸 + 压暗 scrim），
+   不随用户桌面主题切换。
+   ============================================================ */
+.vd-login-card {
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  padding: 36px 32px 26px;
+  border-radius: 20px;
+  background: rgba(18, 22, 30, 0.55);
+  -webkit-backdrop-filter: blur(48px) saturate(160%);
+  backdrop-filter: blur(48px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes vd-login-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-10px); }
+  30% { transform: translateX(8px); }
+  45% { transform: translateX(-6px); }
+  60% { transform: translateX(5px); }
+  75% { transform: translateX(-3px); }
+  90% { transform: translateX(2px); }
+}
+
+.vd-login-shake {
+  animation: vd-login-shake 0.45s var(--vd-ease-standard, cubic-bezier(0.32, 0.72, 0, 1));
+}
+
+.vd-login-logo {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #4da3ff, #7a5cff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(77, 163, 255, 0.4);
+}
+
+.vd-login-title {
+  margin: 0 0 4px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+
+.vd-login-sub {
+  display: block;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.vd-login-error {
+  margin-top: 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 59, 48, 0.18);
+  border: 1px solid rgba(255, 59, 48, 0.45);
+  color: #ffb4ae;
+  font-size: 13px;
+  text-align: center;
+}
+
+.vd-login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+/* 玻璃卡片内的输入框：深色半透明，与卡片底色一致 */
+.vd-login-card .ant-input-affix-wrapper,
+.vd-login-card .ant-input,
+.vd-login-card .ant-input-password {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+/* ============================================================
+   M3：antd 弹层（portal 到 body）层级高于桌面壳
+   窗口 z=10~89 < 启动台 8000 < 顶栏 9000 < 码头 9500
+   弹层统一抬到 9600，消息/通知 9700，右键菜单 10000 保持最高。
+   ============================================================ */
+.ant-modal-mask,
+.ant-modal-wrap,
+.ant-drawer-mask,
+.ant-drawer-content-wrapper,
+.ant-dropdown,
+.ant-select-dropdown,
+.ant-picker-dropdown,
+.ant-popover,
+.ant-tooltip {
+  z-index: 9600 !important;
+}
+
+.ant-message,
+.ant-notification {
+  z-index: 9700 !important;
+}
