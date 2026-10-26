@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useRequest } from 'ahooks'
 import { Alert, Button, Modal, Space, Tooltip } from 'antd'
@@ -24,9 +24,19 @@ import { useAuth } from '@/store/useAuth'
 import FilePreview from './components/FilePreview'
 import ShareModal from '@/pages/app/files/components/ShareModal'
 
+type Props = {
+  /** 窗口模式：直接传 fileId（窗口内 useParams 为空） */
+  fileId?: string
+  /** 窗口模式：返回回调（关闭窗口并回到文件管理器） */
+  onBack?: () => void
+  /** 窗口模式：文件名加载后同步窗口标题 */
+  onTitleChange?: (name: string) => void
+}
+
 /** 文件详情页：元数据 + 锁定状态 + 预览 + 在线编辑 + 下载 + 版本历史。 */
-const FileDetailPage = () => {
-  const { id } = useParams<{ id: string }>()
+const FileDetailPage = ({ fileId, onBack, onTitleChange }: Props = {}) => {
+  const { id: paramId } = useParams<{ id: string }>()
+  const id = fileId ?? paramId
   const navigate = useNavigate()
   const { user } = useAuth()
   const me = user!
@@ -51,6 +61,11 @@ const FileDetailPage = () => {
 
   const file = data?.file ?? null
   const lock = data?.lock ?? null
+
+  // 窗口模式：把文件名同步到窗口标题栏
+  useEffect(() => {
+    if (file?.name) onTitleChange?.(file.name)
+  }, [file?.name])
   const perms = data?.my_perms ?? 0
 
   const canDownload = hasPerm(perms, PERM.DOWNLOAD)
@@ -159,7 +174,7 @@ const FileDetailPage = () => {
           <Button
             type="text"
             icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/app/files')}
+            onClick={() => (onBack ? onBack() : navigate('/app/files'))}
           >
             返回
           </Button>
