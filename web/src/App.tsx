@@ -1,18 +1,21 @@
 import { Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, useLocation, useNavigate, useRoutes } from 'react-router'
-import { Spin } from 'antd'
-import { XProvider } from '@ant-design/x'
-import zhCN from 'antd/locale/zh_CN'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
-import GlobalHistory from '@/components/GlobalHistory'
-import GlobalMessage from '@/components/GlobalMessage'
-import { getAntdTheme } from '@/theme'
+import { setExpiredHandler } from '@/store/token'
+import { ToastHost } from '@/components/ui/toast'
+import { Spin } from '@/components/ui/kit'
 import routes from '~react-pages'
 
 const AppRoutes = () => {
   return (
-    <Suspense fallback={<Spin size="large" fullscreen />}>
+    <Suspense
+      fallback={
+        <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Spin />
+        </div>
+      }
+    >
       {useRoutes(routes)}
     </Suspense>
   )
@@ -25,6 +28,14 @@ const _App = () => {
     ready,
     computed: { logged }
   } = useAuth()
+
+  // 401 过期：清用户，由下方守卫统一回登录页（SPA 内跳转）
+  useEffect(() => {
+    setExpiredHandler(() => {
+      useAuth.setState({ user: null })
+    })
+    return () => setExpiredHandler(null)
+  }, [])
 
   useEffect(() => {
     if (ready) {
@@ -48,7 +59,6 @@ const _App = () => {
 
 function App() {
   const { init: initAuth } = useAuth()
-  const { resolvedTheme } = useSettings()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -61,11 +71,12 @@ function App() {
 
   return (
     <BrowserRouter>
-      <GlobalHistory />
-      <GlobalMessage />
-      <XProvider locale={zhCN} theme={getAntdTheme(resolvedTheme)}>
-        {ready ? <_App /> : <Spin size="large" fullscreen />}
-      </XProvider>
+      <ToastHost />
+      {ready ? <_App /> : (
+        <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Spin />
+        </div>
+      )}
     </BrowserRouter>
   )
 }

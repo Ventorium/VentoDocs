@@ -21,14 +21,29 @@ export const WALLPAPERS: WallpaperDef[] = [
 /**
  * 计算页面根壁纸背景；深色模式叠一层压暗 scrim，保证内容可读。
  * 返回 null 表示无壁纸（调用方回退纯色背景）。
+ *
+ * 注意：必须用长手属性（backgroundImage/Size/Position/Repeat），
+ * 不能用 `background` 简写 + 长手属性混用——React 运行时更新简写值时，
+ * CSSOM 会把简写展开并重置内联 background-size/position/repeat 为初始值，
+ * 而 diff 中"未变化"的长手属性会被跳过重设，壁纸会退化成
+ * auto + repeat：大屏（宽 > 图片原生 1920px）出现平铺、未填满（M2.10）。
  */
 export function wallpaperStyle(wallpaper: string, dark: boolean): CSSProperties | null {
   if (!wallpaper) return null
   const layer = wallpaper.startsWith('/') ? `url('${wallpaper}')` : wallpaper
-  const scrim = dark ? 'linear-gradient(rgba(8, 10, 16, 0.45), rgba(8, 10, 16, 0.45)), ' : ''
+  const scrim = 'linear-gradient(rgba(8, 10, 16, 0.45), rgba(8, 10, 16, 0.45))'
+  if (dark) {
+    return {
+      backgroundImage: `${scrim}, ${layer}`,
+      backgroundSize: 'cover, cover',
+      backgroundPosition: 'center, center',
+      backgroundRepeat: 'no-repeat',
+    }
+  }
   return {
-    background: `${scrim}${layer}`,
+    backgroundImage: layer,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
   }
 }

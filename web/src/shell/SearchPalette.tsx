@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce, useRequest } from 'ahooks'
-import { SearchOutlined } from '@ant-design/icons'
+import { Search } from 'lucide-react'
 import { client } from '@/api'
 import type { SearchHit } from '@/api/schema'
 import FileIcon from '@/components/FileIcon'
@@ -97,7 +97,7 @@ export default function SearchPalette({ open, onClose, onOpenFile }: Props) {
     <div className="vd-search-veil" onMouseDown={onClose}>
       <div className="vd-search-panel" onMouseDown={(e) => e.stopPropagation()}>
         <div className="vd-search-inputrow">
-          <SearchOutlined className="vd-search-inputicon" />
+          <Search size={16} className="vd-search-inputicon" />
           <input
             ref={inputRef}
             className="vd-search-input"

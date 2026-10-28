@@ -1,10 +1,5 @@
-import { useState } from 'react'
-import { Button, Card, Input, Result, Spin, Tag } from 'antd'
-import {
-  ExclamationCircleOutlined,
-  LockOutlined,
-  ShareAltOutlined,
-} from '@ant-design/icons'
+import { useState, type ReactNode } from 'react'
+import { Share2, Lock, TriangleAlert } from 'lucide-react'
 import { useRequest } from 'ahooks'
 import {
   getPublicShareEntries,
@@ -14,6 +9,7 @@ import {
 import type { FileMeta, PublicShareMeta } from '@/api/schema'
 import PublicBrowse from '@/components/public/PublicBrowse'
 import PublicFilePreview from '@/components/public/PublicFilePreview'
+import { Btn, Tag } from '@/components/ui/kit'
 import { formatTime } from '@/lib/format'
 
 /** 分享公开页：/s/{token}，无需登录。 */
@@ -31,36 +27,50 @@ const SharePublicPage = () => {
     { ready: !!token },
   )
 
+  const centerWrap = (children: ReactNode) => (
+    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      {children}
+    </div>
+  )
+
+  const renderTerminal = (title: string, sub?: string) => (
+    <div
+      className="vd-panel"
+      style={{
+        width: 480,
+        maxWidth: 'calc(100vw - 32px)',
+        padding: 32,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 10,
+        textAlign: 'center',
+      }}
+    >
+      <TriangleAlert size={44} style={{ color: 'var(--vd-accent-warning)' }} />
+      <div style={{ fontSize: 16, fontWeight: 600 }}>{title}</div>
+      {sub && sub !== title ? <div style={{ fontSize: 13, color: 'var(--vd-text-secondary)' }}>{sub}</div> : null}
+    </div>
+  )
+
   if (metaLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-#F7F8FA">
-        <Spin size="large" />
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="vd-spin" />
       </div>
     )
   }
 
-  const renderTerminal = (title: string, sub?: string) => (
-    <div className="flex h-screen items-center justify-center bg-#F7F8FA p-16px">
-      <Card className="w-full max-w-480px">
-        <Result
-          icon={<ExclamationCircleOutlined className="text-#FAAD14" style={{ fontSize: 48 }} />}
-          title={title}
-          subTitle={sub && sub !== title ? sub : undefined}
-        />
-      </Card>
-    </div>
-  )
-
   if (metaError) {
     const e = metaError as { status?: number; message?: string }
     if (e.status === 410) {
-      return renderTerminal('分享链接已失效', e.message || '分享内容已被删除或链接已过期')
+      return centerWrap(renderTerminal('分享链接已失效', e.message || '分享内容已被删除或链接已过期'))
     }
-    return renderTerminal('分享链接不存在或已失效', e.message)
+    return centerWrap(renderTerminal('分享链接不存在或已失效', e.message))
   }
 
   if (meta && meta.status === 'expired') {
-    return renderTerminal('分享链接已过期', '请联系分享者重新创建分享')
+    return centerWrap(renderTerminal('分享链接已过期', '请联系分享者重新创建分享'))
   }
 
   // 密码门：分享设置了访问密码且尚未通过校验
@@ -89,26 +99,37 @@ const SharePublicPage = () => {
       }
     }
     return (
-      <div className="flex h-screen items-center justify-center bg-#F7F8FA p-16px">
-        <Card className="w-full max-w-420px">
-          <div className="flex flex-col items-center gap-12px">
-            <LockOutlined className="text-32px text-#2563EB" />
-            <div className="text-16px font-600">该分享需要访问密码</div>
-            <div className="text-13px text-#9CA3AF">分享对象：{meta.name}</div>
-            <Input.Password
-              placeholder="请输入访问密码"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              onPressEnter={() => void doVerify()}
-              autoFocus
-              status={pwdError ? 'error' : undefined}
-            />
-            {pwdError && <div className="text-12px text-#DC2626">{pwdError}</div>}
-            <Button type="primary" loading={verifying} onClick={() => void doVerify()}>
-              进入
-            </Button>
-          </div>
-        </Card>
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div
+          className="vd-panel"
+          style={{
+            width: 420,
+            maxWidth: 'calc(100vw - 32px)',
+            padding: 28,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            alignItems: 'center',
+          }}
+        >
+          <Lock size={32} style={{ color: 'var(--vd-accent)' }} />
+          <div style={{ fontSize: 16, fontWeight: 600 }}>该分享需要访问密码</div>
+          <div style={{ fontSize: 13, color: 'var(--vd-text-secondary)' }}>分享对象：{meta.name}</div>
+          <input
+            className="vd-input"
+            type="password"
+            placeholder="请输入访问密码"
+            value={passwordInput}
+            onChange={(e) => setPasswordInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void doVerify()}
+            autoFocus
+            style={{ width: '100%', marginTop: 8 }}
+          />
+          {pwdError ? <div style={{ fontSize: 12, color: 'var(--vd-accent-danger)' }}>{pwdError}</div> : null}
+          <Btn variant="primary" size="md" loading={verifying} onClick={() => void doVerify()} style={{ width: '100%', marginTop: 4 }}>
+            进入
+          </Btn>
+        </div>
       </div>
     )
   }
@@ -119,13 +140,13 @@ const SharePublicPage = () => {
   const canDownload = !meta.previewOnly
 
   return (
-    <div className="min-h-screen bg-#F7F8FA p-16px">
-      <div className="mx-auto flex max-w-1200px flex-col gap-16px">
-        <div className="flex items-center gap-8px text-13px text-#9CA3AF">
-          <ShareAltOutlined />
+    <div style={{ minHeight: '100vh', padding: 16 }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--vd-text-secondary)' }}>
+          <Share2 size={15} />
           <span>分享</span>
-          {meta.previewOnly && <Tag>仅预览</Tag>}
-          <span className="ml-auto">
+          {meta.previewOnly ? <Tag>仅预览</Tag> : null}
+          <span style={{ marginLeft: 'auto' }}>
             {meta.expiresAt ? `有效期至 ${formatTime(meta.expiresAt)}` : '永久有效'}
             {meta.maxDownloads != null &&
               ` · 剩余下载 ${Math.max(0, meta.maxDownloads - meta.downloadCount)}/${meta.maxDownloads}`}

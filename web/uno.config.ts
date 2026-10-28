@@ -1,5 +1,5 @@
 import { defineConfig } from 'unocss'
-import { AppTheme } from './src/theme'
+import { darkTheme } from './src/theme'
 
 export default defineConfig({
   content: {
@@ -7,7 +7,7 @@ export default defineConfig({
   },
   theme: {
     colors: {
-      primary: AppTheme.primaryColor,
+      primary: darkTheme.accent.primary,
     }
   }
 })

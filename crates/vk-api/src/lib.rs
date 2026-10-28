@@ -207,6 +207,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/directories/{id}/files", post(files::upload))
         .route("/api/v1/files/{id}", get(files::meta).delete(files::trash))
         .route("/api/v1/files/{id}/content", get(files::content))
+        .route("/api/v1/files/{id}/zip", get(files::zip_list))
+        .route("/api/v1/files/{id}/zip-entry", get(files::zip_entry))
         .route("/api/v1/files/{id}/save", post(files::save))
         .route("/api/v1/files/{id}/lock", post(files::lock))
         .route("/api/v1/files/{id}/unlock", post(files::unlock))

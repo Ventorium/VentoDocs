@@ -1,218 +1,136 @@
 /**
- * 桌面外壳（M2 + M4）：壁纸 + 桌面图标 + 窗口集合 + 顶栏/启动台/码头/右键菜单。
- * 路由即窗口：URL 变化 → 打开/聚焦窗口（open）；窗口关闭 → URL 跟随最前窗口。
- * M4 新增：
- * - 全局搜索：Ctrl/Cmd+K 或顶栏搜索按钮唤起 SearchPalette（Spotlight）
- * - 桌面右键「切换壁纸…」：缩略图选择器，即时应用（与系统设置联动）
- * - 窗口关闭幽灵动画：关闭瞬间渲染半透明标题栏淡出，不触碰 store/URL
- * - 桌面图标拖拽排序：HTML5 DnD，顺序持久化到 localStorage
- * - 最前窗口焦点强调（vd-win-focused 阴影）
+ * 桌面壳（M5）：壁纸桌面 + 桌面图标 + 窗口层 + 顶栏 + Dock + 启动台。
+ * SPA 单路由：窗口状态只存前端 store，不再与 URL 同步（对齐 VentoOS）。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { AnimatePresence } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
+import { ImageIcon, Trash2, Folder, Settings, RefreshCw, Monitor } from 'lucide-react'
+import { useWindows } from '@/kernel/window/store'
 import { useSettings } from '@/store/useSettings'
 import { useAuth } from '@/store/useAuth'
-import { WALLPAPERS, wallpaperStyle } from '@/lib/wallpapers'
-import { useWindows, windowKey, type WinRect } from '@/kernel/window/store'
-import { APPS, getApp } from './apps/registry'
-import WindowFrame from './Window'
+import { wallpaperStyle, WALLPAPERS } from '@/lib/wallpapers'
+import type { WallpaperDef } from '@/lib/wallpapers'
+import { APPS } from './apps/registry'
 import TopBar from './TopBar'
 import Dock from './Dock'
 import Launchpad from './Launchpad'
+import WindowFrame from './Window'
+import { ContextMenuHost, useContextMenu } from './ContextMenu'
 import SearchPalette from './SearchPalette'
-import { ContextMenuHost, useContextMenu, type CtxItem } from './ContextMenu'
+import { Modal, Btn } from '@/components/ui/kit'
 
-/** 桌面图标顺序持久化键 */
+type DesktopIcon = { id: string; name: string; appId: string; icon: 'explorer' | 'trash' | 'settings' }
+type Ghost = { x: number; y: number; w: number; h: number; title: string }
+type WallpaperState = WallpaperDef['id'] | 'none'
+
+const DEFAULT_ICON_ORDER: DesktopIcon[] = [
+  { id: 'explorer', name: '文件管理器', appId: 'explorer', icon: 'explorer' },
+  { id: 'trash', name: '回收站', appId: 'trash', icon: 'trash' },
+  { id: 'settings', name: '系统设置', appId: 'settings', icon: 'settings' },
+]
+
 const ICON_ORDER_KEY = 'vd-desktop-icon-order'
 
-/** 应用 + 状态 → URL */
-export function urlFor(appId: string, appState: Record<string, string> = {}): string {
-  if (appId === 'explorer') return appState.dirId ? `/app/files/${appState.dirId}` : '/app/files'
-  if (appId === 'file') return `/app/file/${appState.fileId}`
-  return `/app/${appId}`
+const ICONS: Record<DesktopIcon['icon'], typeof Folder> = {
+  explorer: Folder,
+  trash: Trash2,
+  settings: Settings,
 }
 
-/** URL → 应用 + 状态（无法识别返回 null） */
-export function parseAppRoute(pathname: string): { appId: string; appState: Record<string, string> } | null {
-  const clean = pathname.replace(/\/+$/, '') || '/app'
-  if (clean === '/app') return { appId: 'explorer', appState: {} }
-  if (clean === '/app/files') return { appId: 'explorer', appState: {} }
-  let m = clean.match(/^\/app\/files\/([^/]+)$/)
-  if (m) return { appId: 'explorer', appState: { dirId: m[1] } }
-  m = clean.match(/^\/app\/file\/([^/]+)$/)
-  if (m) return { appId: 'file', appState: { fileId: m[1] } }
-  m = clean.match(/^\/app\/(trash|settings|teams|users|audits)$/)
-  if (m) return { appId: m[1], appState: {} }
-  return null
+function loadIconOrder(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(ICON_ORDER_KEY) || 'null')
+    if (Array.isArray(v)) return v.filter((x) => typeof x === 'string')
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_ICON_ORDER.map((d) => d.id)
 }
-
-type Ghost = { id: string; title: string; rect: WinRect; z: number }
 
 export default function DesktopShell() {
-  const { wallpaper, resolvedTheme, setWallpaper } = useSettings()
-  const { user } = useAuth()
-  const navigate = useNavigate()
-  const pathname = useLocation().pathname
   const windows = useWindows((s) => s.windows)
-  const [launchpad, setLaunchpad] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [wpOpen, setWpOpen] = useState(false)
+  const isAdmin = useAuth((s) => s.user?.role === 'admin')
+  const wallpaper = useSettings((s) => s.wallpaper)
+  const theme = useSettings((s) => s.resolvedTheme)
+  const setWallpaper = useSettings((s) => s.setWallpaper)
+
   const [ghosts, setGhosts] = useState<Ghost[]>([])
-  const prevWins = useRef(windows)
-  const showCtx = useContextMenu((s) => s.show)
+  const [wpOpen, setWpOpen] = useState(false)
+  const [wpChoice, setWpChoice] = useState<WallpaperState>('dark-mountain')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [launchpadOpen, setLaunchpadOpen] = useState(false)
+  const [selIcon, setSelIcon] = useState<string | null>(null)
+  const [iconOrder, setIconOrder] = useState<string[]>(loadIconOrder)
+  const [dragOverIcon, setDragOverIcon] = useState<string | null>(null)
 
-  const isAdmin = user?.role === 'admin'
-  const baseApps = useMemo(
-    () => APPS.filter((a) => a.launchable && (!a.adminOnly || isAdmin)),
-    [isAdmin],
-  )
+  const { show: showCtx } = useContextMenu()
+  const bg = wallpaperStyle(wallpaper, theme === 'dark') ?? undefined
 
-  // ---------- 桌面图标顺序（拖拽后持久化；未知 id 忽略，新应用补在末尾） ----------
-  const [order, setOrder] = useState<string[] | null>(() => {
-    try {
-      const raw = localStorage.getItem(ICON_ORDER_KEY)
-      return raw ? (JSON.parse(raw) as string[]) : null
-    } catch {
-      return null
-    }
-  })
-  const desktopApps = useMemo(() => {
-    if (!order) return baseApps
-    const byId = new Map(baseApps.map((a) => [a.id, a]))
-    const sorted = [] as typeof baseApps
-    for (const id of order) {
-      const a = byId.get(id)
-      if (a) {
-        sorted.push(a)
-        byId.delete(id)
-      }
-    }
-    for (const a of byId.values()) sorted.push(a)
-    return sorted
-  }, [baseApps, order])
-
-  // ---------- 图标拖拽（HTML5 DnD） ----------
-  const dragSrc = useRef<string | null>(null)
-  const [dragId, setDragId] = useState<string | null>(null)
-  const [overId, setOverId] = useState<string | null>(null)
-  const onIconDragStart = (e: React.DragEvent, id: string) => {
-    dragSrc.current = id
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', id)
-    setDragId(id)
-  }
-  const onIconDragOver = (e: React.DragEvent, id: string) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    if (id !== dragSrc.current) setOverId(id)
-  }
-  const onIconDragEnd = () => {
-    dragSrc.current = null
-    setDragId(null)
-    setOverId(null)
-  }
-  const onIconDrop = (e: React.DragEvent, id: string) => {
-    e.preventDefault()
-    const src = dragSrc.current
-    onIconDragEnd()
-    if (!src || src === id) return
-    const ids = desktopApps.map((a) => a.id)
-    const from = ids.indexOf(src)
-    const to = ids.indexOf(id)
-    if (from < 0 || to < 0) return
-    ids.splice(to, 0, ids.splice(from, 1)[0])
-    setOrder(ids)
-    try {
-      localStorage.setItem(ICON_ORDER_KEY, JSON.stringify(ids))
-    } catch {
-      /* 存储不可用时仅本次会话生效 */
-    }
+  // 打开应用：只动窗口，不再动 URL（SPA 单路由）
+  const launch = (appId: string, appState?: Record<string, string>) => {
+    const app = APPS.find((a) => a.id === appId)
+    if (app?.adminOnly && !isAdmin) return
+    useWindows.getState().open(appId, appState)
   }
 
-  // ---------- 全局搜索热键 Ctrl/Cmd+K ----------
+  // Ctrl+K 搜索
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        setSearchOpen((v) => !v)
+        setSearchOpen(true)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // ---------- 窗口关闭 → 幽灵动画（仅视觉；store 已即时更新，check4 依赖） ----------
+  // 窗口关闭幽灵动画
+  const prevWindowsRef = useRef(windows)
   useEffect(() => {
-    const prev = prevWins.current
-    prevWins.current = windows
-    const closed = prev.filter((p) => !windows.some((w) => w.id === p.id) && !p.minimized)
-    closed.forEach((p) => {
-      // 去重：同一 id 的 ghost 只保留一个
-      setGhosts((g) => (g.some((x) => x.id === p.id) ? g : [...g, { id: p.id, title: p.title, rect: p.rect, z: 10 }]))
-      // 不依赖 effect cleanup 的独立定时器：期间其他窗口变化不会取消移除
-      setTimeout(() => setGhosts((g) => g.filter((x) => x.id !== p.id)), 260)
-    })
+    const prev = prevWindowsRef.current
+    prevWindowsRef.current = windows
+    const nowIds = new Set(windows.map((w) => w.id))
+    const closed: Ghost[] = prev
+      .filter((p) => !nowIds.has(p.id) && !p.minimized)
+      .map((p) => ({ x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, title: p.title }))
+    if (closed.length === 0) return
+    setGhosts((g) => [...g, ...closed])
+    const t = setTimeout(() => setGhosts((g) => g.slice(closed.length)), 260)
+    return () => clearTimeout(t)
   }, [windows])
 
-  // URL → 窗口（含权限守卫）
-  useEffect(() => {
-    const parsed = parseAppRoute(pathname)
-    if (!parsed) {
-      navigate('/app/files', { replace: true })
-      return
-    }
-    if (!isAdmin && (parsed.appId === 'users' || parsed.appId === 'audits')) {
-      navigate('/app/files', { replace: true })
-      return
-    }
-    useWindows.getState().open(parsed.appId, parsed.appState)
-  }, [pathname, navigate, isAdmin])
-
-  // 窗口 → URL（当前 URL 对应窗口被关闭时，跟随到最前窗口；全关则保持 URL）。
-  // 注意：必须用 getState() 读最新窗口表 —— 前向同步 effect 的 open() 先于本
-  // effect 执行但 React 闭包里的 windows 还是旧值，直接读闭包会误判并回跳 URL。
-  useEffect(() => {
-    const wins = useWindows.getState().windows
-    const parsed = parseAppRoute(pathname)
-    if (!parsed) return
-    const key = windowKey(parsed.appId, parsed.appState)
-    if (wins.some((w) => w.id === key)) return
-    if (wins.length === 0) return
-    const top = [...wins].reverse().find((w) => !w.minimized) ?? wins[wins.length - 1]
-    navigate(urlFor(top.appId, top.appState), { replace: true })
-  }, [windows, pathname, navigate])
-
-  // 启动台打开时 Esc 关闭
-  useEffect(() => {
-    if (!launchpad) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setLaunchpad(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [launchpad])
-
-  const launch = (appId: string, appState: Record<string, string> = {}) => {
-    useWindows.getState().open(appId, appState)
-    const url = urlFor(appId, appState)
-    if (url !== pathname) navigate(url)
-  }
-
-  const bg = wallpaperStyle(wallpaper, resolvedTheme === 'dark') ?? undefined
-
-  // 最前（非最小化）窗口 id，用于焦点强调
   const topId = [...windows].reverse().find((w) => !w.minimized)?.id
 
-  const desktopMenu: CtxItem[] = [
-    { key: 'show-desktop', label: '显示桌面', onClick: () => useWindows.getState().minimizeAll() },
-    { key: 'open-trash', label: '打开回收站', onClick: () => launch('trash') },
-    { key: 'open-explorer', label: '打开文件管理器', onClick: () => launch('explorer') },
-    { key: 'open-settings', label: '打开系统设置', onClick: () => launch('settings') },
-    { key: 'sep', divider: true },
-    { key: 'switch-wp', label: '切换壁纸…', onClick: () => setWpOpen(true) },
-    { key: 'refresh', label: '刷新', onClick: () => {} },
+  const desktopMenu = () => [
+    { key: 'show-desktop', label: '显示桌面', icon: <Monitor size={14} />, onClick: () => useWindows.getState().minimizeAll() },
+    { key: 'trash', label: '回收站', icon: <Trash2 size={14} />, onClick: () => launch('trash') },
+    { key: 'explorer', label: '文件管理器', icon: <Folder size={14} />, onClick: () => launch('explorer') },
+    { key: 'settings', label: '系统设置', icon: <Settings size={14} />, onClick: () => launch('settings') },
+    { key: 'wp', label: '切换壁纸', icon: <ImageIcon size={14} />, onClick: () => setWpOpen(true) },
+    { key: 'refresh', label: '刷新', icon: <RefreshCw size={14} />, onClick: () => window.location.reload() },
   ]
+
+  const pickWallpaper = (id: WallpaperState) => {
+    const def = WALLPAPERS.find((w) => w.id === id)
+    setWallpaper(def ? def.value : '')
+    setWpOpen(false)
+  }
+
+  const orderedIcons: DesktopIcon[] = iconOrder
+    .map((id) => DEFAULT_ICON_ORDER.find((d) => d.id === id))
+    .filter((d): d is DesktopIcon => !!d)
+
+  const onDropIcon = (targetId: string) => {
+    setDragOverIcon(null)
+    const src = selIcon
+    if (!src || src === targetId) return
+    const next = iconOrder.filter((x) => x !== src && x !== targetId)
+    const idx = next.indexOf(targetId)
+    next.splice(idx, 0, src)
+    localStorage.setItem(ICON_ORDER_KEY, JSON.stringify(next))
+    setIconOrder(next)
+  }
 
   return (
     <div
@@ -220,122 +138,105 @@ export default function DesktopShell() {
       style={bg}
       onContextMenu={(e) => {
         e.preventDefault()
-        showCtx(e.clientX, e.clientY, desktopMenu)
+        showCtx(e.clientX, e.clientY, desktopMenu())
       }}
-      onClick={() => setSelected(null)}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) setSelIcon(null)
+      }}
     >
-      {/* 桌面图标（拖拽排序） */}
+      {/* 桌面图标（左列，顶部状态栏下方开始，可拖拽排序） */}
       <div className="vd-desktop-icons">
-        {desktopApps.map((a) => (
-          <div
-            key={a.id}
-            draggable
-            onDragStart={(e) => onIconDragStart(e, a.id)}
-            onDragOver={(e) => onIconDragOver(e, a.id)}
-            onDrop={(e) => onIconDrop(e, a.id)}
-            onDragEnd={onIconDragEnd}
-            className={`vd-icon${selected === a.id ? ' sel' : ''}${dragId === a.id ? ' dragging' : ''}${overId === a.id ? ' dropover' : ''}`}
-            title={a.desc}
-            onClick={(e) => {
-              e.stopPropagation()
-              setSelected(a.id)
-            }}
-            onDoubleClick={() => launch(a.id)}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              const st = useWindows.getState()
-              const runs = st.windows.filter((w) => w.appId === a.id)
-              const items: CtxItem[] = [
-                { key: 'open', label: `打开 ${a.name}`, onClick: () => launch(a.id) },
-              ]
-              if (runs.length) {
-                items.push({ key: 'sep', divider: true })
-                items.push({
-                  key: 'close-all',
-                  label: '关闭所有窗口',
-                  onClick: () => runs.forEach((w) => st.close(w.id)),
-                })
-              }
-              showCtx(e.clientX, e.clientY, items)
-            }}
-          >
-            <span className="vd-icon-img">{a.icon}</span>
-            <span className="vd-icon-label">{a.name}</span>
-          </div>
-        ))}
+        {orderedIcons.map((d) => {
+          const Icon = ICONS[d.icon]
+          return (
+            <div
+              key={d.id}
+              className={`vd-desktop-icon${selIcon === d.id ? ' sel' : ''}${dragOverIcon === d.id ? ' drag-over' : ''}`}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', d.id)
+              }}
+              onDragOver={(e) => {
+                if (selIcon && selIcon !== d.id) {
+                  e.preventDefault()
+                  setDragOverIcon(d.id)
+                }
+              }}
+              onDragLeave={() => setDragOverIcon(null)}
+              onDrop={(e) => {
+                e.preventDefault()
+                onDropIcon(d.id)
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                setSelIcon(d.id)
+              }}
+              onDoubleClick={() => launch(d.appId)}
+            >
+              <span className={`vd-app-icon vd-app-icon-${d.id}`} style={{ width: 52, height: 52 }}>
+                <Icon size={26} />
+              </span>
+              <span className="vd-desktop-icon-label">{d.name}</span>
+            </div>
+          )
+        })}
       </div>
 
-      {/* 窗口集合（数组顺序 = z 序） */}
-      {windows.map((w, i) => {
-        const app = getApp(w.appId)
-        return (
-          <WindowFrame key={w.id} id={w.id} z={10 + i} focused={w.id === topId}>
-            {app ? app.render(w) : null}
-          </WindowFrame>
-        )
-      })}
+      {/* 窗口层（AnimatePresence 驱动开/关动画） */}
+      <div style={{ position: 'absolute', inset: 0, zIndex: 100, pointerEvents: 'none' }}>
+        <AnimatePresence>
+          {windows.map((w, i) => {
+            const app = APPS.find((a) => a.id === w.appId)
+            return (
+              <WindowFrame key={w.id} id={w.id} z={10 + i} focused={w.id === topId} wallpaperUrl={wallpaper || undefined}>
+                {app ? app.render(w) : null}
+              </WindowFrame>
+            )
+          })}
+        </AnimatePresence>
+      </div>
 
-      {/* 关闭动画幽灵框 */}
-      {ghosts.map((g) => (
-        <div
-          key={g.id}
-          className="vd-window vd-win-ghost"
-          style={{ left: g.rect.x, top: g.rect.y, width: g.rect.w, height: g.rect.h, zIndex: g.z }}
-        >
-          <div className="vd-titlebar">
-            <span className="vd-title">{g.title}</span>
-          </div>
+      {/* 关闭幽灵动画 */}
+      {ghosts.map((g, i) => (
+        <div key={`ghost-${g.title}-${i}`} className="vd-win-ghost" style={{ left: g.x, top: g.y, width: g.w, height: g.h }}>
+          <div className="vd-win-ghost-bar">{g.title}</div>
         </div>
       ))}
 
       <TopBar onLaunch={launch} onSearch={() => setSearchOpen(true)} />
-      <Launchpad
-        open={launchpad}
-        onClose={() => setLaunchpad(false)}
-        onLaunch={(id) => {
-          setLaunchpad(false)
-          launch(id)
-        }}
-      />
-      <Dock onLaunch={launch} onLaunchpad={() => setLaunchpad(true)} />
-      <SearchPalette
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onOpenFile={(fileId) => {
-          setSearchOpen(false)
-          launch('file', { fileId })
-        }}
-      />
+      <Dock onLaunch={launch} onLaunchpad={() => setLaunchpadOpen(true)} />
+      <Launchpad open={launchpadOpen} onClose={() => setLaunchpadOpen(false)} onLaunch={launch} />
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} onOpenFile={(id) => launch('file', { fileId: id })} />
       <ContextMenuHost />
 
-      {/* 壁纸快捷选择器（桌面右键 → 切换壁纸…） */}
-      {wpOpen && (
-        <div className="vd-wp-veil" onMouseDown={() => setWpOpen(false)}>
-          <div className="vd-wp-picker" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="vd-wp-title">切换壁纸</div>
-            <div className="vd-wp-grid">
-              {WALLPAPERS.map((wp) => (
-                <div
-                  key={wp.id}
-                  className={`vd-wp-thumb${wallpaper === wp.value ? ' on' : ''}`}
-                  onClick={() => {
-                    setWallpaper(wp.value)
-                    setWpOpen(false)
-                  }}
-                >
-                  {wp.value ? (
-                    <img src={wp.value} alt={wp.name} draggable={false} />
-                  ) : (
-                    <span className="vd-wp-none">无</span>
-                  )}
-                  <span className="vd-wp-name">{wp.name}</span>
-                </div>
-              ))}
-            </div>
+      <Modal
+        open={wpOpen}
+        title="切换壁纸"
+        onClose={() => setWpOpen(false)}
+        width={420}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
+            <Btn onClick={() => setWpOpen(false)}>取消</Btn>
+            <Btn variant="primary" onClick={() => pickWallpaper(wpChoice)}>
+              应用
+            </Btn>
           </div>
+        }
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+          {WALLPAPERS.map((w) => (
+            <div
+              key={w.id}
+              className={`vd-wp-thumb${wpChoice === w.id ? ' on' : ''}`}
+              style={wallpaperStyle(w.value, theme === 'dark') ?? { background: 'var(--vd-bg-window)' }}
+              onClick={() => setWpChoice(w.id)}
+            >
+              <span className="vd-wp-name">{w.name}</span>
+            </div>
+          ))}
         </div>
-      )}
+      </Modal>
     </div>
   )
 }

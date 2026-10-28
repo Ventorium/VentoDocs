@@ -63,10 +63,10 @@ export const useSettings = create<SettingsState>()((set, get) => {
 
   return {
     loaded: false,
-    themeMode: 'light',
+    themeMode: 'dark',
     wallpaper: '',
     accentColor: null,
-    resolvedTheme: 'light',
+    resolvedTheme: 'dark',
 
     setThemeMode(mode) {
       const resolvedTheme = resolveTheme(mode)

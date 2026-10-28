@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
-import { Empty, Result, Spin } from 'antd'
-import { LockOutlined, WarningOutlined } from '@ant-design/icons'
+import { Btn, Empty, Spin } from '@/components/ui/kit'
 
 type StateViewProps = {
   /** loading | error | empty | noPerms | locked | ready */
@@ -11,6 +10,14 @@ type StateViewProps = {
   lockedText?: string
   emptyText?: string
   minHeight?: number
+}
+
+function Center({ children, minHeight }: { children: ReactNode; minHeight: number }) {
+  return (
+    <div className="vd-flex-center" style={{ minHeight, alignItems: 'center', flexDirection: 'column', gap: 8 }}>
+      {children}
+    </div>
+  )
 }
 
 /**
@@ -28,53 +35,41 @@ const StateView = ({
 }: StateViewProps) => {
   if (state === 'loading') {
     return (
-      <div className="flex items-center justify-center bg-card" style={{ minHeight }}>
-        <Spin size="large" />
-      </div>
+      <Center minHeight={minHeight}>
+        <Spin large />
+      </Center>
     )
   }
   if (state === 'error') {
     return (
-      <div className="flex items-center justify-center bg-card" style={{ minHeight }}>
-        <Result
-          status="error"
-          icon={<WarningOutlined className="text-error" />}
-          title="出错了"
-          subTitle={errorText}
-          extra={retry ? <button type="button" className="ant-btn ant-btn-primary" onClick={retry}>重试</button> : undefined}
-        />
-      </div>
+      <Center minHeight={minHeight}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>出错了</div>
+        <div className="vd-faint" style={{ fontSize: 12.5 }}>{errorText}</div>
+        {retry ? <Btn onClick={retry}>重试</Btn> : null}
+      </Center>
     )
   }
   if (state === 'noPerm') {
     return (
-      <div className="flex items-center justify-center bg-card" style={{ minHeight }}>
-        <Result
-          status="403"
-          icon={<LockOutlined className="text-warning" />}
-          title="无权访问"
-          subTitle="你当前没有该资源的访问权限，请联系管理员或目录所有者授权"
-        />
-      </div>
+      <Center minHeight={minHeight}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>无权访问</div>
+        <div className="vd-faint" style={{ fontSize: 12.5 }}>你当前没有该资源的访问权限，请联系管理员或目录所有者授权</div>
+      </Center>
     )
   }
   if (state === 'locked') {
     return (
-      <div className="flex items-center justify-center bg-card" style={{ minHeight }}>
-        <Result
-          status="warning"
-          icon={<LockOutlined className="text-warning" />}
-          title="文件已锁定"
-          subTitle={lockedText}
-        />
-      </div>
+      <Center minHeight={minHeight}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>文件已锁定</div>
+        <div className="vd-faint" style={{ fontSize: 12.5 }}>{lockedText}</div>
+      </Center>
     )
   }
   if (state === 'empty') {
     return (
-      <div className="flex items-center justify-center bg-card" style={{ minHeight }}>
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} />
-      </div>
+      <Center minHeight={minHeight}>
+        <Empty text={emptyText} />
+      </Center>
     )
   }
   return <>{children}</>

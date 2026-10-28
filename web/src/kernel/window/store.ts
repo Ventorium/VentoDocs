@@ -24,8 +24,8 @@ export type WinState = {
   appState: WinAppState
 }
 
-/** 顶部栏高度（像素），窗口拖拽/最大化的边界 */
-export const TOPBAR_H = 32
+/** 顶部栏高度（像素），窗口拖拽/最大化的边界（与 .vd-topbar 一致） */
+export const TOPBAR_H = 28
 
 /** 窗口唯一键：multiWindow 应用按 fileId 区分 */
 export const windowKey = (appId: string, appState?: WinAppState): string => {

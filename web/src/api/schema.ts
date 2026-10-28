@@ -64,6 +64,22 @@ export type FileMeta = {
   deleted_at?: string | null
 }
 
+/** M2.15：zip 包内条目（扁平相对路径，目录由后端标记）。 */
+export type ZipEntryOut = {
+  name: string
+  size: number
+  is_dir: boolean
+  modified: string | null
+}
+
+/** M2.15：zip 包条目列表。 */
+export type ZipListOut = {
+  name: string
+  size: number
+  entry_count: number
+  entries: ZipEntryOut[]
+}
+
 /** 回收站目录项：Directory + 删除前可读路径。 */
 export type TrashedDirectory = Directory & { original_path: string }
 
@@ -150,18 +166,18 @@ export type LdapConfigInfo = {
 }
 
 /** LDAP 在线配置保存请求（PUT /users/ldap/config）。
- *  bindPassword 缺省/空 = 沿用已有密码，不覆盖。 */
+ *  注意：请求体为 snake_case（后端 LdapConfigReq）；bind_password 缺省/空 = 沿用已有密码，不覆盖。 */
 export type LdapConfigUpdate = {
   host: string
   port: number
-  startTls: boolean
-  baseDn: string
-  bindDn: string
-  bindPassword?: string
-  userFilter: string
-  attrUsername: string
-  attrName: string
-  attrEmail: string
+  start_tls: boolean
+  base_dn: string
+  bind_dn: string
+  bind_password?: string
+  user_filter: string
+  attr_username: string
+  attr_name: string
+  attr_email: string
 }
 
 /** LDAP 连接测试结果（POST /users/ldap/test，始终 200，看 ok 字段）。 */
@@ -172,20 +188,20 @@ export type LdapTestResult = {
   error?: string
 }
 
-/** LDAP 连接测试请求：全部字段可选。
+/** LDAP 连接测试请求：全部字段可选（snake_case，后端 LdapTestReq）。
  *  host 省略（发 `{}`）= 测试当前生效配置；host 有值 = 用表单值测试（保存前测试）。
- *  bindPassword 留空 = 沿用已有密码（库中或环境变量）。 */
+ *  bind_password 留空 = 沿用已有密码（库中或环境变量）。 */
 export type LdapTestReq = {
   host?: string
   port?: number
-  startTls?: boolean
-  baseDn?: string
-  bindDn?: string
-  bindPassword?: string
-  userFilter?: string
-  attrUsername?: string
-  attrName?: string
-  attrEmail?: string
+  start_tls?: boolean
+  base_dn?: string
+  bind_dn?: string
+  bind_password?: string
+  user_filter?: string
+  attr_username?: string
+  attr_name?: string
+  attr_email?: string
 }
 
 /** LDAP 导入结果（POST /users/ldap/import，无请求体）。 */
@@ -476,6 +492,8 @@ export type OpenAPIs = {
     '/api/v1/files/{id}/versions': { query: VersionsQuery; params: IdParams; body: any; headers: any; response: VersionInfo[] }
     // 二进制内容：客户端不解析非 JSON，实际经 raw fetch 下载，见 api/index.ts 的 fetchFileContent。
     '/api/v1/files/{id}/content': { query: any; params: IdParams; body: any; headers: any; response: Response }
+    // M2.15：zip 包内条目列表（二进制 zip-entry 经 raw fetch，见 fetchFileContent）
+    '/api/v1/files/{id}/zip': { query: any; params: IdParams; body: any; headers: any; response: ZipListOut }
     '/api/v1/shares': { query: { resource_type: string; resource_id: string }; params: any; body: any; headers: any; response: ShareListOut }
     '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: PublishGetOut }
     '/api/v1/search': { query: SearchQuery; params: any; body: any; headers: any; response: SearchHit[] }

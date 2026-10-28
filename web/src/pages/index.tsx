@@ -1,14 +1,7 @@
-import { useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import DesktopShell from '@/shell/DesktopShell'
 
 const IndexPage = () => {
-  const location = useLocation()
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    navigate('/app', { replace: true })
-  }, [location.pathname])
-  return null
+  return <DesktopShell />
 }
 
 export default IndexPage

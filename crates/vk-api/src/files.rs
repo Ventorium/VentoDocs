@@ -790,3 +790,210 @@ pub async fn list_trashed(
         .collect();
     Ok(Json(result))
 }
+
+// ────────────────────────────── zip 预览（M2.15）──────────────────────────────
+
+/// zip 列表接口允许读取的最大压缩包大小（512MB，全部读入内存解析）。
+const ZIP_LIST_MAX_BYTES: u64 = 512 * 1024 * 1024;
+/// zip 内单条内容接口允许解压后的最大大小（128MB，浏览器内预览）。
+const ZIP_ENTRY_MAX_BYTES: u64 = 128 * 1024 * 1024;
+/// zip 内条目数上限，超出视为异常归档拒绝预览。
+const ZIP_ENTRY_MAX_COUNT: usize = 100_000;
+
+/// zip 内单个条目的元数据（name 为归一化后的相对路径，目录不带尾斜杠）。
+#[derive(Debug, Serialize)]
+pub struct ZipEntryOut {
+    pub name: String,
+    pub size: u64,
+    pub is_dir: bool,
+    /// DOS 时间戳（1980 起，本地时间）转成的 ISO 形式；缺失为 None。
+    pub modified: Option<String>,
+}
+
+/// zip 列表接口响应。
+#[derive(Debug, Serialize)]
+pub struct ZipListOut {
+    pub name: String,
+    pub size: u64,
+    pub entry_count: usize,
+    pub entries: Vec<ZipEntryOut>,
+}
+
+/// 把 zip 内的条目名归一化为正斜杠相对路径（去前导/尾部斜杠、反斜杠转正斜杠）。
+fn normalize_zip_name(raw: &str) -> String {
+    raw.replace('\\', "/").trim_matches('/').to_string()
+}
+
+/// zip DOS 时间戳 → ISO 本地时间字符串（展示用，非精确时区）。
+fn dos_datetime_to_iso(dt: zip::DateTime) -> String {
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        dt.year(),
+        dt.month(),
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second()
+    )
+}
+
+/// 读取 zip 文件对象到内存（先校验大小上限）。
+async fn read_zip_object(state: &AppState, id: Uuid) -> Result<(FileMeta, Vec<u8>), ApiError> {
+    let file = Files::get_meta(state.db.pool(), id).await?;
+    let (sha, _encoding) = Files::current_ref(state.db.pool(), id).await?;
+    let mut obj = state
+        .objects
+        .open(&sha)
+        .await
+        .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+    let len = obj
+        .metadata()
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件元数据失败：{e}")))?
+        .len();
+    if len > ZIP_LIST_MAX_BYTES {
+        return Err(ApiError::bad_request("压缩包过大，暂不支持预览（超过 512MB）"));
+    }
+    let mut bytes = Vec::with_capacity(len as usize);
+    tokio::io::AsyncReadExt::read_to_end(&mut obj, &mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(format!("读取压缩包失败：{e}")))?;
+    Ok((file, bytes))
+}
+
+/// 解析 zip 中央目录，返回扁平条目列表（含隐含目录由前端根据路径分组）。
+async fn parse_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryOut>, ApiError> {
+    let parsed = tokio::task::spawn_blocking(move || -> Result<Vec<ZipEntryOut>, ApiError> {
+        let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(bytes))
+            .map_err(|_| ApiError::bad_request("不是有效的 zip 压缩包"))?;
+        if archive.len() > ZIP_ENTRY_MAX_COUNT {
+            return Err(ApiError::bad_request("压缩包内文件过多，暂不支持预览"));
+        }
+        let mut out: Vec<ZipEntryOut> = Vec::with_capacity(archive.len());
+        for i in 0..archive.len() {
+            let f = archive
+                .by_index(i)
+                .map_err(|e| ApiError::internal(format!("解析压缩包条目失败：{e}")))?;
+            if f.encrypted() {
+                return Err(ApiError::bad_request("加密压缩包暂不支持预览"));
+            }
+            let name = normalize_zip_name(f.name());
+            if name.is_empty() {
+                continue;
+            }
+            let is_dir = f.is_dir();
+            out.push(ZipEntryOut {
+                name: name.trim_end_matches('/').to_string(),
+                size: if is_dir { 0 } else { f.size() },
+                is_dir,
+                modified: f.last_modified().map(dos_datetime_to_iso),
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("解析压缩包任务失败：{e}")))?;
+    parsed
+}
+
+/// zip 内条目内容查询参数。
+#[derive(Debug, Deserialize)]
+pub struct ZipEntryQuery {
+    pub path: String,
+}
+
+/// 校验 zip 内条目路径：非空、相对路径、不含 `..` 段、不含反斜杠。
+fn validate_zip_entry_path(raw: &str) -> Result<String, ApiError> {
+    let p = raw.trim();
+    if p.is_empty() {
+        return Err(ApiError::bad_request("缺少压缩包内文件路径"));
+    }
+    if p.starts_with('/') || p.contains('\\') {
+        return Err(ApiError::bad_request("无效的压缩包内文件路径"));
+    }
+    if p.split('/').any(|seg| seg == ".." || seg.is_empty()) {
+        return Err(ApiError::bad_request("无效的压缩包内文件路径"));
+    }
+    Ok(p.to_string())
+}
+
+/// zip 包条目列表：GET /api/v1/files/:id/zip。
+/// 返回压缩包内全部条目的相对路径/大小/时间，前端据此做目录树导航。
+pub async fn zip_list(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ZipListOut>, ApiError> {
+    let pool = state.db.pool();
+    require_file_perm(pool, &user, id, Perm::READ_PREVIEW).await?;
+    let (file, bytes) = read_zip_object(&state, id).await?;
+    let entries = parse_zip_entries(bytes).await?;
+    Ok(Json(ZipListOut {
+        name: file.name,
+        size: file.size,
+        entry_count: entries.len(),
+        entries,
+    }))
+}
+
+/// zip 包内单个条目内容：GET /api/v1/files/:id/zip-entry?path=...。
+/// 按归一化路径精确匹配条目并解压返回原始字节（Content-Disposition: inline）。
+pub async fn zip_entry(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Query(q): Query<ZipEntryQuery>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let pool = state.db.pool();
+    require_file_perm(pool, &user, id, Perm::READ_PREVIEW).await?;
+    let entry_path = validate_zip_entry_path(&q.path)?;
+    let entry_path_cmp = entry_path.clone();
+    let (_file, bytes) = read_zip_object(&state, id).await?;
+    let data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ApiError> {
+        let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(bytes))
+            .map_err(|_| ApiError::not_found("不是有效的 zip 压缩包"))?;
+        // 按归一化名匹配（兼容反斜杠/前导斜杠存储的旧归档），目录条目直接排除
+        let mut target: Option<usize> = None;
+        for i in 0..archive.len() {
+            if let Ok(f) = archive.by_index(i) {
+                if normalize_zip_name(f.name()) == entry_path_cmp {
+                    target = Some(i);
+                    break;
+                }
+            }
+        }
+        let Some(idx) = target else {
+            return Err(ApiError::not_found("压缩包内不存在该文件"));
+        };
+        let mut f = archive
+            .by_index(idx)
+            .map_err(|e| ApiError::internal(format!("读取压缩包条目失败：{e}")))?;
+        if f.is_dir() {
+            return Err(ApiError::bad_request("该路径是压缩包内的目录"));
+        }
+        if f.encrypted() {
+            return Err(ApiError::bad_request("加密压缩包暂不支持预览"));
+        }
+        if f.size() > ZIP_ENTRY_MAX_BYTES {
+            return Err(ApiError::bad_request("压缩包内文件过大，暂不支持预览（超过 128MB）"));
+        }
+        let mut buf = Vec::with_capacity(f.size() as usize);
+        std::io::Read::read_to_end(&mut f, &mut buf)
+            .map_err(|e| ApiError::internal(format!("解压压缩包内文件失败：{e}")))?;
+        Ok(buf)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("解析压缩包任务失败：{e}")))?
+    ?;
+    let entry_name = entry_path.rsplit('/').next().unwrap_or(&entry_path).to_string();
+    let response = Response::builder()
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(
+            header::CONTENT_DISPOSITION,
+            content_disposition(&entry_name, false),
+        )
+        .header(header::CONTENT_LENGTH, data.len().to_string())
+        .body(Body::from(data))
+        .map_err(|e| ApiError::internal(format!("构造响应失败：{e}")))?;
+    Ok(response)
+}

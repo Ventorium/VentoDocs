@@ -1,9 +1,9 @@
 /**
- * 顶部栏（M2）：品牌 + 当前活动应用 | 时钟 + 窗口切换 + 设置 + 用户菜单。
+ * 顶部栏（M5）：28px 玻璃条。品牌 + 当前活动应用 | 时钟 + 窗口切换 + 搜索 + 通知 + 设置 + 用户菜单。
  */
 import { useEffect, useState } from 'react'
-import { Dropdown, type MenuProps } from 'antd'
-import { AppstoreOutlined, LogoutOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
+import { LayoutGrid, LogOut, Search, Settings } from 'lucide-react'
+import { Dropdown, type DropItem } from '@/components/ui/kit'
 import { useWindows } from '@/kernel/window/store'
 import { useAuth } from '@/store/useAuth'
 import { APPS } from './apps/registry'
@@ -36,7 +36,7 @@ export default function TopBar({
   const top = [...windows].reverse().find((w) => !w.minimized)
   const activeName = top ? APPS.find((a) => a.id === top.appId)?.name ?? top.appId : '桌面'
 
-  const winMenu: MenuProps['items'] = [
+  const winMenu: DropItem[] = [
     ...windows.map((w) => ({
       key: w.id,
       label: w.title,
@@ -44,20 +44,16 @@ export default function TopBar({
     })),
     ...(windows.length
       ? [
-          { type: 'divider' as const, key: 'sep' },
-          {
-            key: 'min-all',
-            label: '全部最小化',
-            onClick: () => useWindows.getState().minimizeAll(),
-          },
+          { key: 'sep', label: '', divider: true },
+          { key: 'min-all', label: '全部最小化', onClick: () => useWindows.getState().minimizeAll() },
         ]
       : []),
   ]
 
-  const userMenu: MenuProps['items'] = [
+  const userMenu: DropItem[] = [
     { key: 'name', label: `${user?.display_name || user?.username || ''}（${user?.username || ''}）`, disabled: true },
-    { type: 'divider' as const, key: 'sep' },
-    { key: 'logout', label: '退出登录', icon: <LogoutOutlined />, onClick: () => logout() },
+    { key: 'sep', label: '', divider: true },
+    { key: 'logout', label: '退出登录', icon: <LogOut size={14} />, onClick: () => logout() },
   ]
 
   return (
@@ -70,27 +66,35 @@ export default function TopBar({
       </div>
       <div className="vd-tb-right">
         <Clock />
-        <Dropdown menu={{ items: winMenu }} trigger={['click']} placement="bottomRight">
-          <button type="button" className="vd-tb-btn" title="窗口切换">
-            <AppstoreOutlined />
-            {windows.length > 0 && <span className="vd-tb-count">{windows.length}</span>}
-          </button>
-        </Dropdown>
+        <Dropdown
+          items={winMenu}
+          width={200}
+          button={
+            <button type="button" className="vd-tb-btn" title="窗口切换">
+              <LayoutGrid size={14} />
+              {windows.length > 0 && <span className="vd-tb-count">{windows.length}</span>}
+            </button>
+          }
+        />
         <button type="button" className="vd-tb-btn" title="搜索 (Ctrl+K)" onClick={onSearch}>
-          <SearchOutlined />
+          <Search size={14} />
         </button>
         {user && <NotificationsBell onOpenAudits={() => onLaunch('audits')} />}
         <button type="button" className="vd-tb-btn" title="系统设置" onClick={() => onLaunch('settings')}>
-          <SettingOutlined />
+          <Settings size={14} />
         </button>
         {user && (
-          <Dropdown menu={{ items: userMenu }} trigger={['click']} placement="bottomRight">
-            <button type="button" className="vd-tb-btn vd-tb-user" title="用户">
-              <span className="vd-tb-avatar">
-                {(user.display_name || user.username || '?').slice(0, 1).toUpperCase()}
-              </span>
-            </button>
-          </Dropdown>
+          <Dropdown
+            items={userMenu}
+            width={220}
+            button={
+              <button type="button" className="vd-tb-btn vd-tb-user" title="用户">
+                <span className="vd-tb-avatar">
+                  {(user.display_name || user.username || '?').slice(0, 1).toUpperCase()}
+                </span>
+              </button>
+            }
+          />
         )}
       </div>
     </div>

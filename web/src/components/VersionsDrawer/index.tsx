@@ -1,9 +1,10 @@
+import { useState } from 'react'
 import { useRequest } from 'ahooks'
-import { Button, Drawer, Modal, Table, Tag } from 'antd'
-import { HistoryOutlined } from '@ant-design/icons'
+import { History } from 'lucide-react'
 import type { VersionInfo } from '@/api/schema'
 import { client } from '@/api'
-import { msg } from '@/components/GlobalMessage'
+import { Btn, Drawer, Modal, Spin, Tag } from '@/components/ui/kit'
+import { msg } from '@/components/ui/toast'
 import { formatBytes, formatDateTime } from '@/lib/format'
 
 type VersionsDrawerProps = {
@@ -18,7 +19,7 @@ const VersionsDrawer = ({ open, fileId, fileName, onClose }: VersionsDrawerProps
   const { data, loading, run } = useRequest(
     async () => {
       const { error, data: d } = await client.get('/api/v1/files/{id}/versions', {
-        params: { id: fileId! }
+        params: { id: fileId! },
       })
       if (error || !d) throw new Error('加载版本历史失败')
       return d as unknown as VersionInfo[]
@@ -29,101 +30,100 @@ const VersionsDrawer = ({ open, fileId, fileName, onClose }: VersionsDrawerProps
     },
   )
 
-  const doRestore = (v: VersionInfo) => {
-    Modal.confirm({
-      title: `恢复到版本 v${v.version}`,
-      content: '恢复不会覆盖现有版本，而是以旧版本内容创建一个新的当前版本。',
-      okText: '恢复',
-      onOk: async () => {
-        const { error } = await client.post('/api/v1/files/{id}/versions/{version}/restore', {
-          params: { id: fileId!, version: v.version }
-        })
-        if (error) return
-        msg.success(`已恢复 v${v.version}（生成新版本）`)
-        run()
-      },
-    })
+  const [restoring, setRestoring] = useState<VersionInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const currentVersion = data?.[0]?.version ?? -1
+
+  const doRestore = async (v: VersionInfo) => {
+    if (!fileId) return
+    setBusy(true)
+    try {
+      const { error } = await client.post('/api/v1/files/{id}/versions/{version}/restore', {
+        params: { id: fileId, version: v.version },
+      })
+      if (error) return
+      msg.success(`已恢复 v${v.version}（生成新版本）`)
+      setRestoring(null)
+      run()
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      title={
-        <span className="flex items-center gap-6px">
-          <HistoryOutlined className="text-#2563EB" />
-          版本历史{fileName ? ` · ${fileName}` : ''}
-        </span>
-      }
-      width={560}
-      destroyOnHidden
-    >
-      <Table<VersionInfo>
-        rowKey="id"
-        size="middle"
-        loading={loading}
-        dataSource={data ?? []}
-        pagination={false}
-        columns={[
-          {
-            title: '版本',
-            dataIndex: 'version',
-            width: 90,
-            render: (v: number) => (
-              <span className="flex items-center gap-6px">
-                v{v}
-                {v === (data?.[0]?.version ?? -1) && (
-                  <Tag color="blue" className="!m-0">当前</Tag>
-                )}
-              </span>
-            ),
-          },
-          {
-            title: '大小',
-            dataIndex: 'size',
-            width: 90,
-            render: (s: number) => formatBytes(s),
-          },
-          {
-            title: '来源',
-            dataIndex: 'encoding',
-            width: 80,
-            render: (enc: 'office' | 'univer') =>
-              enc === 'univer' ? <Tag color="purple" className="!m-0">在线</Tag> : '—',
-          },
-          {
-            title: '说明',
-            dataIndex: 'note',
-            ellipsis: true,
-            render: (n: string | null) => n || '—',
-          },
-          {
-            title: '操作人',
-            dataIndex: 'created_by_name',
-            width: 110,
-            ellipsis: true,
-          },
-          {
-            title: '时间',
-            dataIndex: 'created_at',
-            width: 150,
-            render: (t: string) => formatDateTime(t),
-          },
-          {
-            title: '',
-            width: 76,
-            render: (_, r) =>
-              r.version !== (data?.[0]?.version ?? -1) ? (
-                <Button type="link" size="small" className="!px-0" onClick={() => doRestore(r)}>
-                  恢复
-                </Button>
-              ) : (
-                <span className="text-12px text-#9CA3AF">当前版本</span>
-              ),
-          },
-        ]}
-      />
-    </Drawer>
+    <>
+      <Drawer
+        open={open}
+        onClose={onClose}
+        title={
+          <>
+            <History size={15} style={{ color: 'var(--vd-accent)' }} />
+            版本历史{fileName ? ` · ${fileName}` : ''}
+          </>
+        }
+      >
+        {loading ? (
+          <div className="vd-flex-center" style={{ height: 240 }}>
+            <Spin />
+          </div>
+        ) : (
+          <div className="vd-table-wrap" style={{ border: '1px solid var(--vd-border-subtle)', borderRadius: 8 }}>
+            <table className="vd-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 90 }}>版本</th>
+                  <th className="num" style={{ width: 90 }}>大小</th>
+                  <th style={{ width: 80 }}>来源</th>
+                  <th>说明</th>
+                  <th style={{ width: 110 }}>操作人</th>
+                  <th style={{ width: 150 }}>时间</th>
+                  <th style={{ width: 80 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {(data ?? []).map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        v{v.version}
+                        {v.version === currentVersion ? <Tag color="blue">当前</Tag> : null}
+                      </span>
+                    </td>
+                    <td className="num">{formatBytes(v.size)}</td>
+                    <td>{v.encoding === 'univer' ? <Tag color="gray">在线</Tag> : '—'}</td>
+                    <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.note || '—'}</td>
+                    <td>{v.created_by_name}</td>
+                    <td>{formatDateTime(v.created_at)}</td>
+                    <td>
+                      {v.version === currentVersion ? (
+                        <span className="vd-faint" style={{ fontSize: 12 }}>当前版本</span>
+                      ) : (
+                        <Btn size="xs" onClick={() => setRestoring(v)}>恢复</Btn>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Drawer>
+
+      <Modal
+        open={!!restoring}
+        title={`恢复到版本 v${restoring?.version ?? ''}`}
+        onClose={() => setRestoring(null)}
+        footer={
+          <>
+            <Btn onClick={() => setRestoring(null)}>取消</Btn>
+            <Btn variant="primary" loading={busy} onClick={() => restoring && void doRestore(restoring)}>恢复</Btn>
+          </>
+        }
+      >
+        <p className="m-0">恢复不会覆盖现有版本，而是以旧版本内容创建一个新的当前版本。</p>
+      </Modal>
+    </>
   )
 }
 

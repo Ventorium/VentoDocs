@@ -1,31 +1,93 @@
 /**
- * 窗口框架（M2）：标题栏 + 红绿灯 + 拖拽 + 8 向缩放 + 最大化跟随视口。
- * 内容 = 直接渲染的应用组件（无独立路由）；最小化保持挂载（visibility 动画）。
+ * 窗口框架（M5，对齐 VentoOS）：玻璃材质 + 红绿灯 + framer 开合/最小化动画。
+ * - 图片壁纸：窗口透明 + 壁纸切片（blur24 saturate180%）+ 明暗 tint
+ * - 渐变/无壁纸：主题玻璃底 + backdrop-blur
+ * - 最小化飞向 dock 图标，还原时直接复位
  */
-import { useEffect, useState, type ReactNode } from 'react'
-import { BorderOuterOutlined, CloseOutlined, MinusOutlined } from '@ant-design/icons'
+import { motion, useAnimationControls } from 'framer-motion'
+import { createContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { TOPBAR_H, useWindows } from '@/kernel/window/store'
+import { wallpaperStyle } from '@/lib/wallpapers'
 import { appMeta } from '@/shell/apps/manifest'
+import { getDockRect } from '@/shell/dockRects'
+import { tokens } from '@/theme'
 
-type Props = { id: string; z: number; focused?: boolean; children: ReactNode }
+type Props = { id: string; z: number; focused?: boolean; wallpaperUrl?: string; children: ReactNode }
+
+/**
+ * 标题栏右侧动作槽（M2.7）：子页面（如文件详情页）通过 useContext(TitleActionContext)
+ * 拿到 setter，把"进入编辑/保存/退出编辑"等上下文化操作放进标题栏右侧。
+ * 渲染在 .vd-titlebar-action（不参与拖拽、不触发双击最大化）。
+ */
+export const TitleActionContext = createContext<((node: ReactNode) => void) | null>(null)
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
-const HANDLES: [string, React.CSSProperties, string][] = [
-  ['n', { top: 0, left: 10, right: 10, height: 5 }, 'ns-resize'],
-  ['s', { bottom: 0, left: 10, right: 10, height: 5 }, 'ns-resize'],
-  ['w', { left: 0, top: 10, bottom: 10, width: 5 }, 'ew-resize'],
-  ['e', { right: 0, top: 10, bottom: 10, width: 5 }, 'ew-resize'],
-  ['nw', { top: 0, left: 0, width: 10, height: 10 }, 'nwse-resize'],
-  ['ne', { top: 0, right: 0, width: 10, height: 10 }, 'nesw-resize'],
-  ['sw', { bottom: 0, left: 0, width: 10, height: 10 }, 'nesw-resize'],
-  ['se', { bottom: 0, right: 0, width: 10, height: 10 }, 'nwse-resize'],
-]
+const HANDLES: string[] = ['n', 's', 'w', 'e', 'nw', 'ne', 'sw', 'se']
 
-export default function WindowFrame({ id, z, focused, children }: Props) {
+export default function WindowFrame({ id, z, focused, wallpaperUrl, children }: Props) {
   const win = useWindows((s) => s.windows.find((w) => w.id === id))
   const dragging = useWindows((s) => s.dragging)
   const [interacting, setInteracting] = useState(false)
+  const [draggingTitle, setDraggingTitle] = useState(false)
+  const [minPhase, setMinPhase] = useState<'none' | 'flying' | 'paused'>('none')
+  const [titleAction, setTitleAction] = useState<ReactNode>(null)
+  const controls = useAnimationControls()
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // 打开动画（mount 时从 0.94 放大淡入）
+  useEffect(() => {
+    controls.start({
+      opacity: 1,
+      scale: 1,
+      y: 0,
+      transition: { duration: tokens.animation.windowOpen.duration, ease: tokens.animation.windowOpen.ease },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 最小化：飞向 dock 图标；还原：直接复位
+  const minimized = win?.minimized ?? false
+  useEffect(() => {
+    if (!win) return
+    if (minimized) {
+      setMinPhase('flying')
+      const rect = rootRef.current?.getBoundingClientRect()
+      const dock = getDockRect(win.appId)
+      if (rect && dock) {
+        const cx = rect.left + rect.width / 2
+        const cy = rect.top + rect.height / 2
+        const t = {
+          duration: tokens.animation.windowMinimize.duration,
+          ease: tokens.animation.windowMinimize.ease,
+        }
+        controls.start(
+          {
+            opacity: 0,
+            scale: 0.1,
+            x: dock.x + dock.width / 2 - cx,
+            y: dock.y + dock.height / 2 - cy,
+            transition: t,
+          },
+          { onComplete: () => setMinPhase('paused') },
+        )
+      } else {
+        controls.start(
+          {
+            opacity: 0,
+            scale: 0.88,
+            y: 40,
+            transition: { duration: tokens.animation.windowMinimize.duration, ease: tokens.animation.windowMinimize.ease },
+          },
+          { onComplete: () => setMinPhase('paused') },
+        )
+      }
+    } else {
+      controls.set({ opacity: 1, scale: 1, x: 0, y: 0 })
+      setMinPhase('none')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minimized])
 
   // 浏览器缩放时让最大化窗口跟随视口
   useEffect(() => {
@@ -42,8 +104,8 @@ export default function WindowFrame({ id, z, focused, children }: Props) {
 
   if (!win) return null
   const meta = appMeta(win.appId)
-  const minW = meta?.minSize?.w ?? 420
-  const minH = meta?.minSize?.h ?? 300
+  const minW = meta?.minSize?.w ?? tokens.window.minWidth
+  const minH = meta?.minSize?.h ?? tokens.window.minHeight
 
   const endInteraction = () => {
     const st = useWindows.getState()
@@ -55,7 +117,8 @@ export default function WindowFrame({ id, z, focused, children }: Props) {
 
   const startDrag = (e: React.MouseEvent) => {
     if (e.button !== 0) return
-    if ((e.target as Element).closest('.vd-tl')) return
+    const t = e.target as Element
+    if (t.closest('.vd-tl') || t.closest('.vd-titlebar-action')) return
     const st = useWindows.getState()
     st.focus(id)
     const mx0 = e.clientX
@@ -78,6 +141,7 @@ export default function WindowFrame({ id, z, focused, children }: Props) {
           r0 = { ...w.rect }
         }
         s.setDragging(true)
+        setDraggingTitle(true)
         setInteracting(true)
       }
       const dx = ev.clientX - mx0
@@ -89,6 +153,7 @@ export default function WindowFrame({ id, z, focused, children }: Props) {
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      setDraggingTitle(false)
       if (r0) endInteraction()
     }
     window.addEventListener('mousemove', onMove)
@@ -105,6 +170,7 @@ export default function WindowFrame({ id, z, focused, children }: Props) {
     const mx0 = e.clientX
     const my0 = e.clientY
     st.setDragging(true)
+    setInteracting(true)
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - mx0
       const dy = ev.clientY - my0
@@ -131,59 +197,123 @@ export default function WindowFrame({ id, z, focused, children }: Props) {
   }
 
   const { x, y, w, h } = win.rect
+  const cls = [
+    'vd-window',
+    win.maximized ? 'maximized' : 'glass-theme',
+    minPhase === 'paused' ? 'vd-win-min' : '',
+    dragging || interacting ? 'vd-win-nodrag' : '',
+    focused ? 'vd-win-focused' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <div
-      className={`vd-window${win.maximized ? ' vd-win-max' : ''}${win.minimized ? ' vd-win-min' : ''}${
-        dragging || interacting ? ' vd-win-nodrag' : ''
-      }${focused ? ' vd-win-focused' : ''}`}
-      style={{ left: x, top: y, width: w, height: h, zIndex: z }}
+    <TitleActionContext.Provider value={setTitleAction}>
+    <motion.div
+      ref={rootRef}
+      className={cls}
+      initial={{ opacity: 0, scale: 0.94, y: 16 }}
+      animate={controls}
+      exit={{ opacity: 0, scale: 0.92, y: 12, transition: { duration: tokens.animation.windowClose.duration, ease: tokens.animation.windowClose.ease } }}
+      style={{
+        left: x,
+        top: y,
+        width: w,
+        height: h,
+        zIndex: z,
+        position: 'absolute',
+        display: minPhase === 'paused' ? 'none' : undefined,
+      }}
       onMouseDown={() => useWindows.getState().focus(id)}
       onContextMenu={(e) => e.stopPropagation()}
     >
-      <div
-        className="vd-titlebar"
-        onMouseDown={startDrag}
-        onDoubleClick={() => useWindows.getState().toggleMaximize(id)}
-      >
-        <div className="vd-tl" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="vd-tl-btn close"
-            title="关闭"
-            onClick={() => useWindows.getState().close(id)}
-          >
-            <CloseOutlined />
-          </button>
-          <button
-            type="button"
-            className="vd-tl-btn min"
-            title="最小化"
-            onClick={() => useWindows.getState().minimize(id)}
-          >
-            <MinusOutlined />
-          </button>
-          <button
-            type="button"
-            className="vd-tl-btn max"
-            title="最大化"
-            onClick={() => useWindows.getState().toggleMaximize(id)}
-          >
-            <BorderOuterOutlined />
-          </button>
+      {wallpaperUrl ? (
+        <>
+          {/* 切片内放一个视口尺寸图层，用与桌面相同的 cover/center/no-repeat 几何，
+              再按窗口位置 (x,y) 平移补偿，保证玻璃与桌面壁纸严格对齐（M2.10） */}
+          <div className="vd-win-glass-slice">
+            <div
+              className="vd-win-glass-slice-img"
+              style={{
+                left: `${24 - x}px`,
+                top: `${24 - y}px`,
+                ...wallpaperStyle(wallpaperUrl, false),
+              }}
+            />
+          </div>
+          <div className="vd-win-glass-tint" />
+        </>
+      ) : null}
+      <div className="vd-win-body">
+        <div
+          className={`vd-titlebar${win.maximized ? '' : ' draggable'}${draggingTitle ? ' dragging' : ''}`}
+          onMouseDown={startDrag}
+          onDoubleClick={() => !win.minimized && useWindows.getState().toggleMaximize(id)}
+        >
+          <div className="vd-tl" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="vd-tl-btn close"
+              title="关闭"
+              onClick={() => useWindows.getState().close(id)}
+            >
+              {/* VentoOS 像素级图标：6×6 画布、1.5 描边、圆头，保证在 14px 圆内光学居中 */}
+              <span className="vd-tl-glyph">
+                <svg width="6" height="6" viewBox="0 0 6 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+                  <line x1="1" y1="1" x2="5" y2="5" />
+                  <line x1="5" y1="1" x2="1" y2="5" />
+                </svg>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="vd-tl-btn minimize"
+              title="最小化"
+              onClick={() => useWindows.getState().minimize(id)}
+            >
+              <span className="vd-tl-glyph">
+                <svg width="6" height="6" viewBox="0 0 6 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+                  <line x1="1" y1="3" x2="5" y2="3" />
+                </svg>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="vd-tl-btn maximize"
+              title="最大化"
+              onClick={() => useWindows.getState().toggleMaximize(id)}
+            >
+              <span className="vd-tl-glyph">
+                <svg width="6" height="6" viewBox="0 0 6 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="1,3.5 1,5 2.5,5" />
+                  <polyline points="4.5,1 5,1 5,2.5" />
+                  <line x1="1" y1="5" x2="5" y2="1" />
+                </svg>
+              </span>
+            </button>
+          </div>
+          <span className="vd-title">{win.title}</span>
+          {titleAction !== null && (
+            <span
+              className="vd-titlebar-action"
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
+              {titleAction}
+            </span>
+          )}
+          <span className="vd-titlebar-spacer" />
         </div>
-        <span className="vd-title">{win.title}</span>
-        <span className="vd-titlebar-spacer" />
+        <div className="vd-content">
+          {minPhase === 'paused' ? <div className="vd-win-paused">进程已暂停</div> : children}
+        </div>
+        {!win.maximized &&
+          HANDLES.map((dir) => (
+            <div key={dir} className={`vd-rh ${dir}`} onMouseDown={startResize(dir)} />
+          ))}
       </div>
-      <div className="vd-content">{children}</div>
-      {!win.maximized &&
-        HANDLES.map(([dir, pos, cursor]) => (
-          <div
-            key={dir}
-            className="vd-rh"
-            style={{ position: 'absolute', ...pos, cursor }}
-            onMouseDown={startResize(dir)}
-          />
-        ))}
-    </div>
+    </motion.div>
+    </TitleActionContext.Provider>
   )
 }

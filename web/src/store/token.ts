@@ -1,9 +1,13 @@
-import { globalNavigate } from '@/components/GlobalHistory'
-
 const TOKEN_KEY = 'user.access_token'
 
+let expiredHandler: (() => void) | null = null
+
+export function setExpiredHandler(cb: (() => void) | null): void {
+  expiredHandler = cb
+}
+
 export function getAccessToken(): string | null {
-  // 优先从 URL 参数中获取 token
+  // 优先从 URL 参数中获取 token（?token= 直达入口）
   const urlParams = new URLSearchParams(window.location.search)
   const urlToken = urlParams.get('token')
   if (urlToken) {
@@ -25,8 +29,12 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
-/** Token 失效统一出口：清 token 并跳登录页（供 api 层 401 拦截与 useAuth 复用） */
+/** Token 失效统一出口：清 token 并跳登录页（SPA 内走注册的处理，未注册时整页跳转） */
 export function onExpired(): void {
   clearToken()
-  globalNavigate('/auth/login', { replace: true })
+  if (expiredHandler) {
+    expiredHandler()
+  } else {
+    window.location.href = '/auth/login'
+  }
 }

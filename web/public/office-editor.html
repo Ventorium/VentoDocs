@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Office Editor</title>
+    <!-- OnlyOffice Document Editor API -->
+    <script src="/document/web-apps/apps/api/documents/api.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+      #editor-container {
+        width: 100%;
+        height: 100%;
+      }
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.92);
+        z-index: 9999;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: #666;
+        font-size: 14px;
+        gap: 8px;
+      }
+      #loading::before {
+        content: '';
+        width: 20px;
+        height: 20px;
+        border: 2px solid #ddd;
+        border-top-color: #999;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor-container"></div>
+    <div id="loading">正在加载编辑器…</div>
+
+    <script>
+      let editor = null
+
+      // 宿主声明只取文件流：SDK 保存/下载路径（x2t.downloadFile）仅 postMessage
+      // onlyoffice-file-stream 给父窗口，不触发浏览器下载（保存时不弹下载栏）
+      window.OO_FILE_STREAM_ONLY = true
+
+      // 当前打开会话的 token（openDoc 写入，保存桥接读取）
+      let currentToken = null
+
+      // Hide loading and open document
+      function openDoc(opts) {
+        document.getElementById('loading').style.display = 'none'
+
+        const { fileExt, fileName, bin, media, token, readOnly } = opts
+        currentToken = token
+
+        if (!window.DocsAPI) {
+          parent.postMessage({ type: 'editorError', token, error: '编辑器核心脚本加载失败' }, '*')
+          return
+        }
+
+        // 重复打开前先销毁旧实例
+        destroyEditor()
+
+        // Create OnlyOffice Document Editor
+        // url 留空：离线构建的 app 收到空 url 时不执行内部 x2t/fetch，
+        // 真实文档内容由下方 onAppReady 的 editor.openDocument(bin)（二进制路径）打开
+        editor = new window.DocsAPI.DocEditor('editor-container', {
+          document: {
+            title: fileName,
+            url: '',
+            fileType: fileExt,
+            permissions: {
+              edit: !readOnly,
+              chat: false,
+              protect: false
+            }
+          },
+          editorConfig: {
+            lang: 'zh',
+            // 启用二进制保存：SDK 仅在 DocInfo.SupportsOnSaveDocument 为真时
+            // 才通过 onSaveDocument 事件回传保存后的 bin（api.js 亦按事件注册自动置位）
+            canSaveDocumentToBinary: true,
+            customization: {
+              help: false,
+              about: false,
+              hideRightMenu: true,
+              features: {
+                spellcheck: {
+                  change: false
+                }
+              },
+              anonymous: {
+                request: false,
+                label: 'Guest'
+              }
+            }
+          },
+          events: {
+            onAppReady: () => {
+              // 设置嵌入图片 URL（当前构建的 app 未实现 asc_setImageUrls，仅在支持时发送）
+              if (media && Object.keys(media).length > 0 && typeof editor.sendCommand === 'function') {
+                editor.sendCommand({
+                  command: 'asc_setImageUrls',
+                  data: { urls: media }
+                })
+              }
+              // 先下发文档元信息（opendocument 命令）：SDK 渲染门控要求
+              // isLoadFullApi && DocInfo && openResult 同时成立，而二进制路径
+              // （opendocumentfrombinary）不设置 DocInfo，必须先用 opendocument
+              // 设置（url 留空 → 不触发 app 内部 fetch，api.js 侧有 url 守卫）
+              if (typeof editor.openDocumentInfo === 'function') {
+                editor.openDocumentInfo({
+                  title: fileName,
+                  url: '',
+                  fileType: fileExt,
+                  key: fileName,
+                  permissions: {
+                    edit: !readOnly,
+                    chat: false,
+                    protect: false
+                  }
+                })
+              }
+              // 打开文档：走公共 API 的二进制路径
+              // （api.js openDocument → app 原生 openDocumentFromBinary → asc_openDocumentFromBytes）
+              // bin 由 SPA 侧 x2t 预转换为 app 原生格式；slice() 确保 buffer 与数组一一对应
+              if (bin && typeof editor.openDocument === 'function') {
+                editor.openDocument(bin.slice())
+              }
+              parent.postMessage({ type: 'editorReady', token }, '*')
+            },
+            onDocumentReady: () => {
+              parent.postMessage({ type: 'documentReady', token }, '*')
+            },
+            // 9.3.0.133 二进制保存事件名是 onSaveDocument（非旧版 onSave），
+            // 且 e.data 直接是文档 bin（ArrayBuffer 或 TypedArray，无 option 包裹）
+            onSaveDocument: (e) => {
+              const raw = e.data
+              let saved
+              if (raw instanceof ArrayBuffer) saved = new Uint8Array(raw)
+              else if (raw && raw.buffer) saved = new Uint8Array(raw.buffer, raw.byteOffset || 0, raw.byteLength)
+              if (!saved) return
+              parent.postMessage({ type: 'saveDocument', token, data: { data: saved, option: {} } }, '*')
+            },
+            writeFile: (e) => {
+              const data = { data: e.data.data, file: e.data.file }
+              parent.postMessage({ type: 'writeFile', token, data }, '*')
+            },
+            onError: (e) => {
+              const error = e.data?.errorDescription || 'Unknown editor error'
+              parent.postMessage({ type: 'editorError', token, error }, '*')
+            }
+          }
+        })
+      }
+
+      // Destroy editor on unmount
+      function destroyEditor() {
+        if (editor) {
+          try {
+            editor.destroyEditor()
+            editor = null
+          } catch (e) {
+            console.warn('destroyEditor failed:', e)
+          }
+        }
+      }
+
+      // Listen for messages from parent window
+      window.addEventListener('message', (event) => {
+        const msg = event.data
+        if (!msg || !msg.type) return
+
+        if (msg.type === 'openDocument') {
+          // token 在消息顶层（与 DocEditor 约定），合并进 openDoc 参数
+          openDoc({ ...msg.payload, token: msg.token })
+        }
+
+        if (msg.type === 'destroy') {
+          destroyEditor()
+        }
+
+        if (msg.type === 'updateMedia') {
+          if (editor && msg.media) {
+            editor.sendCommand({
+              command: 'asc_setImageUrls',
+              data: { urls: msg.media }
+            })
+          }
+        }
+
+        // SDK 本地保存路径：x2t.downloadFile 把已转成目标格式的文档字节
+        // 以 onlyoffice-file-stream 回传直接父窗口（本页），重新转发为
+        // saveDocument 给 SPA，并标记 alreadyConverted 使 SPA 跳过 bin 转换
+        if (msg.type === 'onlyoffice-file-stream' && currentToken != null && msg.buffer) {
+          const bytes = new Uint8Array(msg.buffer)
+          parent.postMessage(
+            { type: 'saveDocument', token: currentToken, data: { data: bytes, option: { alreadyConverted: true } } },
+            '*',
+          )
+        }
+      })
+
+      // 通知父窗口 iframe 已就绪
+      parent.postMessage({ type: 'iframeReady' }, '*')
+    </script>
+  </body>
+</html>

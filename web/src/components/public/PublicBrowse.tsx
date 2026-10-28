@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useRequest } from 'ahooks'
-import { Breadcrumb, Empty, Table } from 'antd'
-import { RightOutlined } from '@ant-design/icons'
+import { ChevronRight } from 'lucide-react'
 import type { FileMeta, PublicEntry } from '@/api/schema'
 import { formatBytes, formatTime } from '@/lib/format'
 import { fileTypeInfo } from '@/lib/fileType'
 import FileIcon, { FolderIcon } from '@/components/FileIcon'
 import StateView from '@/components/StateView'
+import { Spin } from '@/components/ui/kit'
 import PublicFilePreview, { type PublicSource } from './PublicFilePreview'
 
 type PublicBrowseProps = {
@@ -58,96 +58,110 @@ const PublicBrowse = ({ rootName, rootId, source, canDownload, getEntries }: Pub
     }
   }
 
-  const crumbs = useMemo(
-    () =>
-      stack.map((seg, i) => ({
-        title: (
-          <span className={i === stack.length - 1 ? 'font-600' : 'cursor-pointer'}>
-            {seg.name}
-          </span>
-        ),
-        key: seg.id,
-        onClick: i < stack.length - 1 ? () => jumpTo(i) : undefined,
-      })),
-    [stack],
-  )
-
   if (selected) {
     return (
-      <div className="flex flex-col gap-12px">
-        <div className="flex items-center gap-8px">
-          <button
-            type="button"
-            className="text-13px text-#2563EB cursor-pointer bg-transparent border-0 p-0"
-            onClick={back}
-          >
-            ← 返回目录
-          </button>
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <button
+          type="button"
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--vd-accent)',
+            cursor: 'pointer',
+            fontSize: 13,
+            padding: 0,
+          }}
+          onClick={back}
+        >
+          ← 返回目录
+        </button>
         <PublicFilePreview file={selected} source={source} canDownload={canDownload} />
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-12px">
-      <Breadcrumb
-        items={crumbs.map((c) => ({ title: c.title, key: c.key, onClick: c.onClick }))}
-        separator={<RightOutlined className="text-12px text-#9CA3AF" />}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* 面包屑 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 13 }}>
+        {stack.map((seg, i) => {
+          const last = i === stack.length - 1
+          return (
+            <span key={seg.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              {i > 0 ? (
+                <ChevronRight
+                  size={13}
+                  style={{ color: 'var(--vd-text-tertiary)', flexShrink: 0 }}
+                />
+              ) : null}
+              <span
+                style={{
+                  color: last ? 'var(--vd-text-primary)' : 'var(--vd-accent)',
+                  fontWeight: last ? 600 : 400,
+                  cursor: last ? 'default' : 'pointer',
+                }}
+                onClick={() => jumpTo(i)}
+              >
+                {seg.name}
+              </span>
+            </span>
+          )
+        })}
+      </div>
+
       <StateView state={loading ? 'loading' : error ? 'error' : 'ready'} errorText="加载失败，请重试" retry={refresh}>
-        <div className="rounded-8px border-1px border-#E5E7EB bg-white">
-          <Table<PublicEntry>
-            rowKey={(e) => (e.kind === 'directory' ? e.directory.id : e.file.id)}
-            size="small"
-            dataSource={entries ?? []}
-            pagination={false}
-            locale={{
-              emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该目录为空" />,
-            }}
-            onRow={(r) => ({
-              onClick: () => {
-                if (r.kind === 'directory') goDir(r.directory.id, r.directory.name)
-                else setSelected(r.file)
-              },
-              style: { cursor: 'pointer' },
-            })}
-            columns={[
-              {
-                title: '名称',
-                render: (_: unknown, r: PublicEntry) =>
-                  r.kind === 'directory' ? (
-                    <span className="flex items-center gap-8px min-w-0">
-                      <FolderIcon size={16} />
-                      <span className="truncate">{r.directory.name}</span>
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-8px min-w-0">
-                      <FileIcon name={r.file.name} size={16} />
-                      <span className="truncate">{r.file.name}</span>
-                    </span>
-                  ),
-              },
-              {
-                title: '类型',
-                width: 110,
-                render: (_: unknown, r: PublicEntry) =>
-                  r.kind === 'directory' ? '文件夹' : fileTypeInfo(r.file.name).label,
-              },
-              {
-                title: '大小',
-                width: 100,
-                render: (_: unknown, r: PublicEntry) =>
-                  r.kind === 'directory' ? '-' : formatBytes(r.file.size),
-              },
-              {
-                title: '更新时间',
-                width: 160,
-                render: (_: unknown, r: PublicEntry) =>
-                  r.kind === 'directory' ? '-' : formatTime(r.file.updated_at),
-              },
-            ]}
-          />
+        <div className="vd-panel" style={{ padding: 0, overflow: 'hidden' }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center' }}>
+              <Spin />
+            </div>
+          ) : (entries ?? []).length === 0 ? (
+            <div className="vd-empty">该目录为空</div>
+          ) : (
+            <div className="vd-table-wrap">
+              <table className="vd-table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th style={{ width: 110 }}>类型</th>
+                    <th style={{ width: 100 }}>大小</th>
+                    <th style={{ width: 160 }}>更新时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries?.map((r) => {
+                    const key = r.kind === 'directory' ? `d:${r.directory.id}` : `f:${r.file.id}`
+                    return (
+                      <tr
+                        key={key}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          if (r.kind === 'directory') goDir(r.directory.id, r.directory.name)
+                          else setSelected(r.file)
+                        }}
+                      >
+                        <td>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                            {r.kind === 'directory' ? (
+                              <FolderIcon size={16} />
+                            ) : (
+                              <FileIcon name={r.file.name} size={16} />
+                            )}
+                            <span className="vd-truncate">{r.kind === 'directory' ? r.directory.name : r.file.name}</span>
+                          </span>
+                        </td>
+                        <td>
+                          {r.kind === 'directory' ? '文件夹' : fileTypeInfo(r.file.name).label}
+                        </td>
+                        <td>{r.kind === 'directory' ? '-' : formatBytes(r.file.size)}</td>
+                        <td>{r.kind === 'directory' ? '-' : formatTime(r.file.updated_at)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </StateView>
     </div>

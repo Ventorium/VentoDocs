@@ -1,6 +1,7 @@
 import { createFetchClient } from '@doremijs/o2t/client'
-import { msg } from '@/components/GlobalMessage'
+import { msg } from '@/components/ui/toast'
 import { getAccessToken, onExpired } from '@/store/token'
+import { isZipFileId, parseZipFileId } from '@/lib/zipEntry'
 import type { OpenAPIs } from './schema'
 
 const PUBLIC_PATHS = ['/api/v1/auth/login', '/api/v1/auth/bootstrap']
@@ -41,10 +42,14 @@ export const client = createFetchClient<OpenAPIs>({
   }
 })
 
-/** 下载文件内容（二进制，绕过 JSON 客户端）。 */
+/** 下载文件内容（二进制，绕过 JSON 客户端）。支持 zip 虚拟 id：`zip:<zipFileId>@<条目路径>`。 */
 export async function fetchFileContent(fileId: string): Promise<Response> {
   const token = getAccessToken()
-  const response = await fetch(`/api/v1/files/${fileId}/content`, {
+  const ref = isZipFileId(fileId) ? parseZipFileId(fileId) : null
+  const url = ref
+    ? `/api/v1/files/${ref.zipFileId}/zip-entry?path=${encodeURIComponent(ref.entryPath)}`
+    : `/api/v1/files/${fileId}/content`
+  const response = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   })
   if (!response.ok) {

@@ -44,19 +44,10 @@ export const APP_META: AppMeta[] = [
   {
     id: 'teams',
     name: '团队管理',
-    desc: '团队与成员管理',
-    defaultSize: { w: 920, h: 580 },
-    minSize: { w: 680, h: 420 },
-    launchable: true,
-  },
-  {
-    id: 'users',
-    name: '用户管理',
-    desc: '用户与 LDAP 导入',
+    desc: '团队、用户与 LDAP 导入',
     defaultSize: { w: 960, h: 580 },
     minSize: { w: 680, h: 420 },
     launchable: true,
-    adminOnly: true,
   },
   {
     id: 'audits',

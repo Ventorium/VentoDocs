@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Empty, Spin } from 'antd'
-import { DownloadOutlined, InboxOutlined } from '@ant-design/icons'
+import { Download, Info } from 'lucide-react'
 import { saveAs } from 'file-saver'
 import type { FileMeta } from '@/api/schema'
 import {
@@ -9,11 +8,11 @@ import {
   getPublicShareFileDownload,
   getPublicShareFilePreview,
 } from '@/api/public'
-import { msg } from '@/components/GlobalMessage'
+import { msg } from '@/components/ui/toast'
 import DocEditor, { EDITOR_EDITABLE_EXT, EDITOR_READONLY_EXT } from '@/components/DocEditor'
 import { formatBytes, formatTime } from '@/lib/format'
 import { fileTypeInfo } from '@/lib/fileType'
-import { getConfig } from '@/store/config'
+import { Btn, Empty, Spin } from '@/components/ui/kit'
 
 export type PublicSource =
   | { kind: 'share'; token: string; password?: string }
@@ -33,7 +32,6 @@ const PublicFilePreview = ({ file, source, canDownload }: PublicFilePreviewProps
   const ext = file.name.includes('.') ? (file.name.split('.').pop() ?? '').toLowerCase() : ''
   const info = fileTypeInfo(file.name)
   const isEditorFile = EDITOR_EDITABLE_EXT.has(ext) || EDITOR_READONLY_EXT.has(ext)
-  const editorBase = getConfig().editorBase
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -104,18 +102,8 @@ const PublicFilePreview = ({ file, source, canDownload }: PublicFilePreviewProps
 
   const body = useMemo(() => {
     if (isEditorFile) {
-      if (!editorBase) {
-        return (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={`「${info.label}」暂不支持在线预览${canDownload ? '，请下载后查看' : ''}`}
-            style={{ padding: '80px 0' }}
-          />
-        )
-      }
       return (
         <DocEditor
-          editorBase={editorBase}
           fileName={file.name}
           fetchBytes={fetchEditorBytes}
           readonly
@@ -124,11 +112,11 @@ const PublicFilePreview = ({ file, source, canDownload }: PublicFilePreviewProps
         />
       )
     }
-    if (loading) return <Spin className="my-40px block" />
-    if (error) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={error} />
+    if (loading) return <div style={{ padding: '40px 0' }}><Spin /></div>
+    if (error) return <Empty text={error} />
     if (info.preview === 'image' && blobUrl) {
       return (
-        <div className="flex justify-center py-16px">
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
           <img src={blobUrl} alt={file.name} style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 280px)' }} />
         </div>
       )
@@ -143,22 +131,21 @@ const PublicFilePreview = ({ file, source, canDownload }: PublicFilePreviewProps
       )
     }
     if (info.preview === 'text' && text !== null) {
-      return <pre className="text-13px leading-20px whitespace-pre-wrap break-all p-12px m-0">{text}</pre>
+      return <pre style={{ fontSize: 13, lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', padding: 12, margin: 0 }}>{text}</pre>
     }
     return (
       <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description={`「${info.label}」暂不支持在线预览${canDownload ? '，请下载后查看' : ''}`}
+        text={`「${info.label}」暂不支持在线预览${canDownload ? '，请下载后查看' : ''}`}
       />
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditorFile, editorBase, info.label, info.preview, loading, error, blobUrl, text, file, canDownload])
+  }, [isEditorFile, info.label, info.preview, loading, error, blobUrl, text, file, canDownload])
 
   return (
-    <div className="flex flex-col gap-12px">
-      <div className="flex items-center gap-12px flex-wrap">
-        <span className="text-15px font-600">{file.name}</span>
-        <span className="text-12px text-#9CA3AF">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--vd-text-primary)' }}>{file.name}</span>
+        <span style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
           {[
             info.label,
             file.size > 0 ? formatBytes(file.size) : null,
@@ -167,25 +154,26 @@ const PublicFilePreview = ({ file, source, canDownload }: PublicFilePreviewProps
             .filter(Boolean)
             .join(' · ')}
         </span>
-        <div className="ml-auto flex items-center gap-8px">
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {file.current_version > 0 && (
-            <span className="text-12px text-#9CA3AF">
+            <span style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
               {file.current_version > 1 ? `第 ${file.current_version} 版` : '第 1 版'}
             </span>
           )}
           {canDownload && (
-            <Button icon={<DownloadOutlined />} onClick={doDownload}>
+            <Btn size="sm" onClick={() => void doDownload()}>
+              <Download size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
               下载
-            </Button>
+            </Btn>
           )}
         </div>
       </div>
-      <div className="rounded-8px border-1px border-#E5E7EB bg-white overflow-hidden min-h-360px">
+      <div className="vd-panel" style={{ overflow: 'hidden', minHeight: 360 }}>
         {body}
       </div>
       {!loading && !error && !isEditorFile && info.preview === 'binary' && !canDownload && (
-        <div className="flex items-center gap-8px text-12px text-#9CA3AF">
-          <InboxOutlined />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
+          <Info size={14} />
           该分享/站点仅限预览，此文件不支持在线预览且禁止下载
         </div>
       )}

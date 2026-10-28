@@ -1,7 +1,6 @@
 import { client } from '@/api'
 import { create } from 'zustand'
-import { globalNavigate } from '@/components/GlobalHistory'
-import { getAccessToken, setAccessToken, clearToken, onExpired } from './token'
+import { getAccessToken, setAccessToken, onExpired } from './token'
 
 export type AuthUser = {
   id: string
@@ -75,7 +74,6 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
   logout() {
     set({ user: null })
-    clearToken()
-    globalNavigate('/auth/login', { replace: true })
+    onExpired()
   }
 }))

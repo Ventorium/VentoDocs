@@ -1,24 +1,17 @@
 /**
- * 通知中心（M4）：顶栏铃铛 + 未读徽标 + 下拉活动面板。
+ * 通知中心（M5）：顶栏铃铛 + 未读徽标 + 自绘下拉活动面板（无 antd）。
  * 数据：GET /api/v1/notifications（管理员=全部活动，普通用户=仅本人操作）。
  * 未读数 = 最近条目中晚于上次打开时间戳（localStorage）的条数；打开面板即标记已读。
  */
-import { useState } from 'react'
-import { Badge, Popover } from 'antd'
-import {
-  BellOutlined,
-  FileOutlined,
-  LockOutlined,
-  SettingOutlined,
-  ShareAltOutlined,
-  SendOutlined,
-  UserOutlined,
-} from '@ant-design/icons'
+import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Bell, FileText, Lock, Send, Settings, Share2, UserRound } from 'lucide-react'
 import { useRequest } from 'ahooks'
 import { client } from '@/api'
 import type { AuditEntry } from '@/api/schema'
 import { formatTime } from '@/lib/format'
 import { useAuth } from '@/store/useAuth'
+import { tokens } from '@/theme'
 
 const SEEN_KEY = 'vd-notif-seen-at'
 
@@ -51,20 +44,20 @@ const ACTION_TEXT: Record<string, string> = {
 }
 
 function CategoryIcon({ category }: { category: string }) {
-  const style = { fontSize: 15, color: 'var(--vd-accent)' }
+  const cls = 'text-[var(--vd-accent)]'
   switch (category) {
     case 'file':
-      return <FileOutlined style={style} />
+      return <FileText size={15} className={cls} />
     case 'share':
-      return <ShareAltOutlined style={style} />
+      return <Share2 size={15} className={cls} />
     case 'publish':
-      return <SendOutlined style={style} />
+      return <Send size={15} className={cls} />
     case 'admin':
-      return <SettingOutlined style={style} />
+      return <Settings size={15} className={cls} />
     case 'lock':
-      return <LockOutlined style={style} />
+      return <Lock size={15} className={cls} />
     default:
-      return <UserOutlined style={style} />
+      return <UserRound size={15} className={cls} />
   }
 }
 
@@ -97,6 +90,8 @@ export default function NotificationsBell({ onOpenAudits }: { onOpenAudits?: () 
   const isAdmin = user?.role === 'admin'
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<AuditEntry[] | null>(null)
+  const bellRef = useRef<HTMLButtonElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
 
   const { loading, run } = useRequest(
     async () => {
@@ -121,62 +116,95 @@ export default function NotificationsBell({ onOpenAudits }: { onOpenAudits?: () 
     { manual: false },
   )
 
+  // 点击外部 / Esc 关闭
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (popRef.current?.contains(e.target as Node)) return
+      if (bellRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
   const seenAt = readSeenAt()
   const unread = (items ?? []).filter((e) => new Date(e.ts).getTime() > seenAt).length
 
-  const content = (
-    <div className="vd-notif-panel">
-      <div className="vd-notif-head">
-        <span>活动通知</span>
-        <span className="vd-notif-sub">最近 {items?.length ?? 0} 条</span>
-      </div>
-      <div className="vd-notif-list">
-        {loading && !items ? (
-          <div className="vd-notif-empty">加载中…</div>
-        ) : items && items.length > 0 ? (
-          items.map((e) => (
-            <div key={e.id} className="vd-notif-item">
-              <span className="vd-notif-ico">
-                <CategoryIcon category={e.category} />
-              </span>
-              <div className="vd-notif-main">
-                <div className="vd-notif-text">{entryText(e)}</div>
-                <div className="vd-notif-time" title={formatTime(e.ts)}>
-                  {relTime(e.ts)}
-                </div>
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="vd-notif-empty">暂无最近活动</div>
-        )}
-      </div>
-      {isAdmin && onOpenAudits && (
-        <div className="vd-notif-foot">
-          <a onClick={onOpenAudits}>查看全部审计日志</a>
-        </div>
-      )}
-    </div>
-  )
+  const rect = open ? bellRef.current?.getBoundingClientRect() : null
+  const popStyle: React.CSSProperties | undefined = rect
+    ? { top: rect.bottom + 8, right: Math.max(8, window.innerWidth - rect.right) }
+    : undefined
 
   return (
-    <Popover
-      content={content}
-      trigger={['click']}
-      open={open}
-      arrow={false}
-      placement="bottomRight"
-      overlayClassName="vd-notif-pop"
-      onOpenChange={(v) => {
-        setOpen(v)
-        if (v) fetchAndMarkRead()
-      }}
-    >
-      <button type="button" className="vd-tb-btn vd-notif-bell" title="通知中心">
-        <Badge count={unread} size="small" offset={[-2, 2]}>
-          <BellOutlined />
-        </Badge>
+    <>
+      <button
+        ref={bellRef}
+        type="button"
+        className="vd-tb-btn vd-notif-bell"
+        title="通知中心"
+        onClick={() => {
+          const next = !open
+          setOpen(next)
+          if (next) fetchAndMarkRead()
+        }}
+      >
+        <Bell size={14} />
+        {unread > 0 && <span className="vd-tb-badge">{unread > 99 ? '99+' : unread}</span>}
       </button>
-    </Popover>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            ref={popRef}
+            className="vd-notif-pop"
+            style={popStyle}
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            transition={{ duration: tokens.animation.contextMenu.duration, ease: tokens.animation.contextMenu.ease }}
+          >
+            <div className="vd-notif-panel">
+              <div className="vd-notif-head">
+                <span>活动通知</span>
+                <span className="vd-notif-sub">最近 {items?.length ?? 0} 条</span>
+              </div>
+              <div className="vd-notif-list">
+                {loading && !items ? (
+                  <div className="vd-notif-empty">加载中…</div>
+                ) : items && items.length > 0 ? (
+                  items.map((e) => (
+                    <div key={e.id} className="vd-notif-item">
+                      <span className="vd-notif-ico">
+                        <CategoryIcon category={e.category} />
+                      </span>
+                      <div className="vd-notif-main">
+                        <div className="vd-notif-text">{entryText(e)}</div>
+                        <div className="vd-notif-time" title={formatTime(e.ts)}>
+                          {relTime(e.ts)}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="vd-notif-empty">暂无最近活动</div>
+                )}
+              </div>
+              {isAdmin && onOpenAudits && (
+                <div className="vd-notif-foot">
+                  <a onClick={onOpenAudits}>查看全部审计日志</a>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   )
 }

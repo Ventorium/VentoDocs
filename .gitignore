@@ -26,3 +26,6 @@ web/public/_info
 
 # 在线编辑器静态资源（scripts/fetch-editor.sh 拉取，约 460MB）
 editor-dist/
+
+# 参考项目（本地 clone，不入版本控制）
+.repos/
