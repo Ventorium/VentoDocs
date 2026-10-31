@@ -1,4 +1,4 @@
-import type { PublicPublishMeta, PublicShareMeta, PublicEntry } from './schema'
+import type { PublicPublishMeta, PublicShareMeta, PublicEntry, PublishPasswordResp } from './schema'
 
 /**
  * 公开（未鉴权）API 客户端：/api/v1/public/*。
@@ -107,6 +107,15 @@ export function getPublicPublishMeta(publishId: string, bearerToken?: string): P
   return request(`/api/v1/public/published/${encodeURIComponent(publishId)}`, {}, { bearerToken }).then(
     (r) => r.json() as Promise<PublicPublishMeta>,
   )
+}
+
+/** M2.26：站点密码校验；成功返回 24h 站点 token，后续请求经 Bearer 携带。 */
+export async function verifyPublicPublishPassword(publishId: string, password: string): Promise<PublishPasswordResp> {
+  const res = await request(
+    `/api/v1/public/published/${encodeURIComponent(publishId)}/password`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }) },
+  )
+  return (await res.json()) as PublishPasswordResp
 }
 
 /** 列目录条目（包装为 {entries: [...]}）。 */

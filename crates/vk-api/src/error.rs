@@ -40,6 +40,11 @@ impl ApiError {
         )
     }
 
+    /// 自定义 401 文案（站点密码错误等公开端点场景）。
+    pub fn unauthorized_with(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, "UNAUTHENTICATED", message)
+    }
+
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, "FORBIDDEN", message)
     }
@@ -107,6 +112,12 @@ impl ApiError {
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
+    }
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} {}", self.status, self.code, self.message)
     }
 }
 

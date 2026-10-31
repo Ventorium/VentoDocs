@@ -623,6 +623,20 @@ kbd.vd-kbd {
   border: 0.5px solid rgba(128, 128, 128, 0.3);
   box-sizing: border-box;
 }
+/* M2.22：未激活窗口 hover 到红绿灯组时，亮起真实红/黄/绿（对齐 macOS 行为，
+   不再是灰底） */
+.vd-window:not(.vd-win-focused) .vd-tl:hover .vd-tl-btn.close {
+  background: var(--vd-tl-close);
+  border-color: transparent;
+}
+.vd-window:not(.vd-win-focused) .vd-tl:hover .vd-tl-btn.minimize {
+  background: var(--vd-tl-min);
+  border-color: transparent;
+}
+.vd-window:not(.vd-win-focused) .vd-tl:hover .vd-tl-btn.maximize {
+  background: var(--vd-tl-max);
+  border-color: transparent;
+}
 .vd-titlebar:hover .vd-tl-btn .vd-tl-glyph {
   opacity: 1;
 }
@@ -746,7 +760,7 @@ kbd.vd-kbd {
   z-index: 2500;
   display: flex;
   align-items: flex-end;
-  gap: 6px;
+  gap: 14px;
   padding: 8px 12px;
   background: var(--vd-bg-dock);
   -webkit-backdrop-filter: blur(48px) saturate(220%);
@@ -810,7 +824,7 @@ kbd.vd-kbd {
   width: 1px;
   height: 40px;
   background: var(--vd-border-strong);
-  margin: 0 4px;
+  margin: 0 6px;
   flex-shrink: 0;
 }
 
@@ -948,6 +962,35 @@ kbd.vd-kbd {
   height: 1px;
   background: var(--vd-border-subtle);
   margin: 5px 4px;
+}
+
+/* M2.22：dock flyout 菜单 —— 锚定在 dock 图标正上方，底部小箭头指向图标 */
+.vd-ctx.vd-ctx-above {
+  transform-origin: bottom center;
+  animation: vd-ctx-above-in 0.12s ease-out;
+}
+@keyframes vd-ctx-above-in {
+  from {
+    opacity: 0;
+    margin-bottom: -4px;
+  }
+  to {
+    opacity: 1;
+    margin-bottom: 0;
+  }
+}
+.vd-ctx-caret {
+  position: absolute;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--vd-bg-context);
+  border-right: 0.5px solid var(--vd-border-subtle);
+  border-bottom: 0.5px solid var(--vd-border-subtle);
+  transform: translateX(-50%) rotate(45deg);
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
 }
 
 /* ---------- 全局搜索（Spotlight） ---------- */
@@ -2295,9 +2338,9 @@ select.vd-input option {
 .vd-file-content--text {
   padding: 0;
 }
-/* 十六进制/二进制：紧凑留白 */
+/* 十六进制/二进制：无留白（M2.29：用户要求去掉内容区 padding，与文本族一致） */
 .vd-file-content--hex {
-  padding: 12px;
+  padding: 0;
 }
 .vd-viewer-footer {
   flex-shrink: 0;
@@ -2666,6 +2709,62 @@ select.vd-input option {
   min-height: 0;
   border-right: 0.5px solid var(--vd-border-subtle);
   background: var(--vd-bg-secondary, transparent);
+  /* M2.21：拖拽高亮徽标（.vd-fm-col-drop-hint）绝对定位的参照 */
+  position: relative;
+}
+/* M2.21：拖拽悬停整列高亮（内部移动 / 本地上传），提示松手目标 */
+.vd-fm-col.is-drop-col {
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: inset 0 0 0 2px var(--vd-accent);
+}
+.vd-fm-col-drop-hint {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  font-size: 11px;
+  z-index: 5;
+  background: var(--vd-accent);
+  color: #fff;
+  border-radius: 999px;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+}
+/* M2.21：预览面板分享状态 */
+.vd-fm-preview-meta .vd-fm-share-on {
+  color: var(--vd-accent);
+  font-weight: 600;
+}
+/* M2.26：预览面板发布站点地址（长 URL 省略号截断，悬停 title 显示全文） */
+.vd-fm-pub-url {
+  display: inline-block;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.vd-fm-preview-grants {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--vd-accent);
+  background: rgba(59, 130, 246, 0.06);
+  border-radius: 0 6px 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--vd-text-secondary);
+}
+.vd-fm-preview-grant-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 .vd-fm-col-items {
   position: relative;
@@ -3033,4 +3132,165 @@ select.vd-input option {
 .vd-fm-path-refresh:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* ── M2.18 文件管理器左栏：个人文件 / 团队共享 / 分享给我 ── */
+.vd-fm-sidebar {
+  width: 172px;
+  min-width: 172px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--vd-border-subtle);
+  background: var(--vd-bg-secondary, transparent);
+  padding: 8px 6px;
+  gap: 8px;
+  overflow: hidden;
+  user-select: none;
+}
+.vd-fm-scope-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.vd-fm-scope-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vd-text-primary);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.vd-fm-scope-btn:hover {
+  background: rgba(120, 120, 128, 0.14);
+}
+.vd-fm-scope-btn.is-active {
+  background: rgba(59, 130, 246, 0.12);
+}
+.vd-fm-scope-btn.is-active span {
+  color: var(--vd-accent);
+  font-weight: 600;
+}
+.vd-fm-badge {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 16px;
+  min-width: 16px;
+  text-align: center;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.25);
+  color: var(--vd-accent);
+}
+.vd-fm-sidebar-hint {
+  font-size: 11px;
+  color: var(--vd-text-faint, rgba(160, 160, 168, 0.8));
+  padding: 4px 8px;
+  line-height: 1.5;
+}
+.vd-fm-sidebar-empty {
+  font-size: 11.5px;
+  color: var(--vd-text-faint, rgba(160, 160, 168, 0.8));
+  padding: 14px 8px;
+}
+.vd-fm-shared-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+.vd-fm-shared-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vd-text-primary);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  min-width: 0;
+}
+.vd-fm-shared-item:hover {
+  background: rgba(120, 120, 128, 0.14);
+}
+.vd-fm-shared-item.is-current {
+  background: rgba(59, 130, 246, 0.12);
+}
+.vd-fm-shared-item.is-current .vd-fm-shared-name {
+  color: var(--vd-accent);
+  font-weight: 600;
+}
+.vd-fm-shared-ico {
+  flex: none;
+  color: var(--vd-accent);
+  opacity: 0.8;
+}
+.vd-fm-shared-name {
+  flex: none;
+  max-width: 78px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vd-fm-shared-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--vd-text-faint, rgba(160, 160, 168, 0.8));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* ── M2.18b：共享列条目副行（分享来源 + 只读标记）────────────────── */
+.vd-fm-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vd-fm-item-meta {
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--vd-text-faint, rgba(160, 160, 168, 0.8));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.vd-fm-item.is-current .vd-fm-item-meta,
+.vd-fm-item.is-multi .vd-fm-item-meta {
+  color: rgba(255, 255, 255, 0.75);
+}
+.vd-fm-item.is-ancestor .vd-fm-item-meta {
+  color: var(--vd-accent);
+  opacity: 0.8;
+}
+
+/* ── M2.37：文件条目锁定图标（warning 色；悬停 title 显示锁定人/时间）───── */
+.vd-fm-item-lock {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--vd-accent-warning, #d97706);
+}
+.vd-fm-item.is-current .vd-fm-item-lock,
+.vd-fm-item.is-multi .vd-fm-item-lock {
+  color: rgba(255, 255, 255, 0.9);
+}
+.vd-fm-item.is-ancestor .vd-fm-item-lock {
+  color: var(--vd-accent);
 }

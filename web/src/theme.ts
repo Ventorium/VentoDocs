@@ -55,8 +55,9 @@ export const tokens = {
     contextMenu: { duration: 0.12, ease: [0.32, 0.72, 0, 1] as const },
   },
   topBar: { height: 28 },
-  dock: { height: 68, iconSize: 40, hoveredIconSize: 64, margin: 8, gap: 6 },
-  window: { titleBarHeight: 38, minWidth: 320, minHeight: 200 },
+  dock: { height: 68, iconSize: 40, hoveredIconSize: 64, margin: 8, gap: 14 },
+  // M2.29：窗口最小宽高放宽到 64px（用户要求：不固定宽高，允许缩得很小）
+  window: { titleBarHeight: 38, minWidth: 64, minHeight: 64 },
   launchpad: { iconSize: 64, columns: 5 },
 } as const
 

@@ -18,6 +18,7 @@ export type ModalTarget =
   | { type: 'unlock'; file: FileMeta; lock: FileLock }
   | { type: 'versions'; file: FileMeta }
   | { type: 'grants'; dir: Directory }
+  | { type: 'file-grants'; file: FileMeta; dir: Directory }
   | null
 
 type FileEntry = Extract<Entry, { kind: 'file' }>
@@ -38,7 +39,8 @@ export type EntryMenuActions = {
   /** force=true（管理员解锁他人）由调用方弹确认框后执行 */
   unlock: (file: FileMeta, lock: FileLock, force: boolean) => void
   deleteEntry: (entry: Entry) => void
-  grants: (dir: Directory) => void
+  /** 权限管理：传 Directory（目录菜单）或 { id, file? }（文件菜单，需先取目录并校验管理者身份；带 file 时打开文件级权限）。 */
+  grants: (dir: Directory | { id: string; file?: FileMeta }) => void
   publish: (entry: DirEntry) => void
 }
 
@@ -54,8 +56,14 @@ export function fileMenuItems(
   if (hasPerm(perms, PERM.DOWNLOAD)) {
     items.push({ key: 'download', label: '下载', onClick: () => a.download(file) })
   }
-  if (hasPerm(perms, PERM.SHARE)) {
+  // M2.35: 分享不再按权限位委派，仅文件创建者本人可分享
+  if (file.created_by === me.id) {
     items.push({ key: 'share', label: '分享', onClick: () => a.share(entry) })
+  }
+  // M2.18: 文件也提供「权限管理」。M2.23: 带 file 打开文件级权限（本文件独立授权，覆盖所在目录继承权限）。
+  // M2.35: 无管理员旁路——仅文件创建者可管理该文件的授权。
+  if (file.created_by === me.id) {
+    items.push({ key: 'grants', label: '权限管理', onClick: () => a.grants({ id: file.directory_id, file }) })
   }
   if (hasPerm(perms, PERM.MODIFY_RENAME)) {
     items.push({ key: 'rename', label: '重命名', onClick: () => a.rename(entry) })
@@ -102,13 +110,16 @@ export function dirMenuItems(
   if (hasPerm(perms, PERM.MOVE_COPY)) {
     items.push({ key: 'move', label: '移动', onClick: () => a.move(entry) })
   }
-  if (hasPerm(perms, PERM.SHARE)) {
+  // M2.35: 分享不再按权限位委派，仅目录创建者本人可分享
+  if (directory.created_by === me.id) {
     items.push({ key: 'share', label: '分享', onClick: () => a.share(entry) })
   }
-  if (hasPerm(perms, PERM.PUBLISH)) {
+  // M2.35: 发布为网站仅目录创建者（无管理员旁路）
+  if (directory.created_by === me.id) {
     items.push({ key: 'publish', label: '发布为网站', onClick: () => a.publish(entry) })
   }
-  if (me.role === 'admin' || directory.created_by === me.id) {
+  // M2.35: 无管理员旁路——仅目录创建者可管理该目录的授权
+  if (directory.created_by === me.id) {
     items.push({
       key: 'grants',
       label: '权限管理',
@@ -285,6 +296,26 @@ export function useEntryActions(
     onReload()
   }
 
+  // M2.18: 从文件菜单打开权限管理——只有 directory_id，先取目录再校验管理者身份。
+  // M2.23: ref.file 存在时打开文件级权限管理（file-grants）。
+  const openGrants = async (ref: Directory | { id: string; file?: FileMeta }) => {
+    let dir: Directory
+    if ('name' in ref) {
+      dir = ref
+    } else {
+      const { data, error } = await client.get('/api/v1/directories/{id}', { params: { id: ref.id } })
+      if (error || !data) return
+      dir = data.directory
+    }
+    // M2.35: 无管理员旁路——仅目录创建者可管理授权
+    if (dir.created_by !== me.id) {
+      msg.error('仅目录创建者可管理该目录的授权')
+      return
+    }
+    if (ref.file) setModal({ type: 'file-grants', file: ref.file, dir })
+    else setModal({ type: 'grants', dir })
+  }
+
   const menuActions: EntryMenuActions = {
     download: (file) => void doDownload(file),
     share: (entry) => setModal({ type: 'share', entry }),
@@ -298,7 +329,7 @@ export function useEntryActions(
       else void doUnlock(file, false)
     },
     deleteEntry: (entry) => confirmDelete(entry),
-    grants: (dir) => setModal({ type: 'grants', dir }),
+    grants: (dir) => void openGrants(dir),
     publish: (entry) => setModal({ type: 'publish', entry }),
   }
 

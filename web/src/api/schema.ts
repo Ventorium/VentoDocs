@@ -92,24 +92,30 @@ export type FileLock = {
   locked_at: string
 }
 
-/** 文件详情：元数据 + 锁 + 当前用户权限位。 */
+/** 文件详情：元数据 + 锁 + 当前用户权限位（M2.36 起区分含/不含管理员旁路）。 */
 export type FileOut = {
   file: FileMeta
   lock: FileLock | null
+  /** 含管理员旁路（后端 API 校验用，前端不再用于 UI 显隐）。 */
   my_perms: number
+  /** M2.36：授权权限位（不含管理员旁路；文件创建者恒为 1023）——UI 按此显隐编辑等按钮。 */
+  granted_perms: number
 }
 
-/** 目录页：当前目录 + 子项 + 当前用户在该目录的权限位。 */
+/** 目录页：当前目录 + 子项（含逐子项授权位） + 当前用户有效权限位。 */
 export type DirectoryPage = {
   directory: Directory
   children: Entry[]
+  /** 含管理员旁路（保留兼容）。 */
   my_perms: number
+  /** M2.36：当前目录的授权权限位（不含管理员旁路；根目录补 RP|CU）。 */
+  granted_perms: number
 }
 
-/** 目录子项（serde tag = "kind"）；文件项附带当前锁状态。 */
+/** 目录子项（serde tag = "kind"）；文件项附带当前锁状态；M2.36 起均附带授权权限位。 */
 export type Entry =
-  | { kind: 'directory'; directory: Directory }
-  | { kind: 'file'; file: FileMeta; lock: FileLock | null }
+  | { kind: 'directory'; directory: Directory; my_perms: number }
+  | { kind: 'file'; file: FileMeta; lock: FileLock | null; my_perms: number }
 
 export type GrantItem = {
   id: string
@@ -119,6 +125,42 @@ export type GrantItem = {
   principal_name: string
   perms: number
   created_at: string
+}
+
+/** M2.23：文件级授权行（覆盖所在目录的继承权限）。 */
+export type FileGrantItem = {
+  id: string
+  file_id: string
+  principal_type: PrincipalType
+  principal_id: string
+  principal_name: string
+  perms: number
+  created_at: string
+}
+
+/** M2.23：文件授权管理页响应 = 本文件独立授权 + 所在目录的继承授权。 */
+export type FileGrantsOut = {
+  file_grants: FileGrantItem[]
+  inherited: {
+    directory_id: string
+    directory_name: string
+    grants: GrantItem[]
+  }
+}
+
+/** M2.18：分享栏目录项（文件管理器左侧「团队共享 / 分享给我」数据源）。 */
+export type SharedDirOut = {
+  id: string
+  name: string
+  path: string
+  parent_id: string | null
+  created_by: string | null
+  /** 目录创建者显示名（即「来自谁」）。 */
+  owner_name: string | null
+  /** scope=team 时分享该目录的团队名；scope=me 时为 null。 */
+  team_name: string | null
+  /** 当前用户对该目录链解析后的有效权限位。 */
+  perms: number
 }
 
 export type VersionInfo = {
@@ -230,6 +272,8 @@ export type Share = {
   access_count: number
   preview_only: boolean
   revoked: boolean
+  /** M2.24：链接范围 internal 内网 / external 外网 */
+  scope: 'internal' | 'external'
   created_by: string | null
   created_at: string
 }
@@ -244,6 +288,18 @@ export type ShareCreateReq = {
   /** null/省略 = 不限；n ≥ 1 */
   max_downloads?: number | null
   preview_only?: boolean
+  /** M2.24：internal（默认）/ external（需系统启用外网域名） */
+  scope?: 'internal' | 'external'
+}
+
+/** M2.24：分享链接系统设置（管理员在「设置 → 分享」中配置）。 */
+export type ShareSystemSettings = {
+  /** 分享端口（独立监听），修改后需重启服务生效 */
+  port: number
+  external_enabled: boolean
+  external_domain: string
+  /** 服务当前实际绑定的分享端口（改端口重启前与 port 可能不同） */
+  active_port?: number
 }
 
 export type ShareOut = {
@@ -283,6 +339,10 @@ export type PublishedDir = {
   publish_id: string
   enabled: boolean
   policy: PublishPolicy
+  /** M2.26：login 策略下是否已设置站点访问密码 */
+  has_password: boolean
+  /** M2.28：站点服务模式 static | spa | file_index */
+  site_mode: string
   created_by: string | null
   created_at: string
   updated_at: string
@@ -303,6 +363,26 @@ export type PublishGetOut = {
 
 export type PublishEnableReq = {
   policy: PublishPolicy
+  /** M2.26：login 策略的站点访问密码（留空 = 沿用已有密码） */
+  password?: string
+  /** M2.28：站点服务模式 static | spa | file_index（缺省 = 沿用已有/纯静态） */
+  site_mode?: string
+}
+
+/** M2.27：发布域名（只读；域名仅来自服务器环境变量 VIENTO_PUBLISH_DOMAIN）。 */
+export type PublishSystemSettings = {
+  /** 当前生效的发布域名（来自环境变量；空串 = 未配置） */
+  domain: string
+  /** 当前实际生效的域名 */
+  effective_domain: string | null
+  /** 环境变量 VIENTO_PUBLISH_DOMAIN 当前值 */
+  env_domain: string | null
+}
+
+/** M2.26：站点密码校验成功响应（24h 站点 token）。 */
+export type PublishPasswordResp = {
+  token: string
+  expires_in: number
 }
 
 /** 公开站点元信息（camelCase，未鉴权；login 策略需 Bearer JWT）。 */
@@ -485,10 +565,12 @@ export type OpenAPIs = {
     '/api/v1/notifications': { query: NotificationQuery; params: any; body: any; headers: any; response: AuditEntry[] }
     '/api/v1/directories/root': { query: any; params: any; body: any; headers: any; response: DirectoryPage }
     '/api/v1/directories/{id}': { query: any; params: IdParams; body: any; headers: any; response: DirectoryPage }
+    '/api/v1/directories/shared': { query: { scope: string }; params: any; body: any; headers: any; response: SharedDirOut[] }
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: any; headers: any; response: { grants: GrantItem[] } }
     '/api/v1/trash/directories': { query: any; params: any; body: any; headers: any; response: TrashedDirectory[] }
     '/api/v1/trash/files': { query: any; params: any; body: any; headers: any; response: TrashedFile[] }
     '/api/v1/files/{id}': { query: any; params: IdParams; body: any; headers: any; response: FileOut }
+    '/api/v1/files/{id}/grants': { query: any; params: IdParams; body: any; headers: any; response: FileGrantsOut }
     '/api/v1/files/{id}/versions': { query: VersionsQuery; params: IdParams; body: any; headers: any; response: VersionInfo[] }
     // 二进制内容：客户端不解析非 JSON，实际经 raw fetch 下载，见 api/index.ts 的 fetchFileContent。
     '/api/v1/files/{id}/content': { query: any; params: IdParams; body: any; headers: any; response: Response }
@@ -499,6 +581,8 @@ export type OpenAPIs = {
     '/api/v1/search': { query: SearchQuery; params: any; body: any; headers: any; response: SearchHit[] }
     '/api/v1/users/ldap/config': { query: any; params: any; body: any; headers: any; response: LdapConfigInfo }
     '/api/v1/settings/desktop': { query: any; params: any; body: any; headers: any; response: DesktopSettings }
+    '/api/v1/settings/system/share': { query: any; params: any; body: any; headers: any; response: ShareSystemSettings }
+    '/api/v1/settings/system/publish': { query: any; params: any; body: any; headers: any; response: PublishSystemSettings }
   }
   post: {
     '/api/v1/auth/bootstrap': { query: any; params: any; body: BootstrapReq; headers: any; response: LoginResp }
@@ -527,10 +611,13 @@ export type OpenAPIs = {
     '/api/v1/shares': { query: any; params: any; body: ShareCreateReq; headers: any; response: ShareOut }
     '/api/v1/shares/{id}/revoke': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: PublishEnableReq; headers: any; response: PublishOut }
+    '/api/v1/public/published/{publish_id}/password': { query: any; params: any; body: { password: string }; headers: any; response: PublishPasswordResp }
   }
   put: {
     '/api/v1/directories/{id}/grants': { query: any; params: IdParams; body: SetGrantReq; headers: any; response: { ok: boolean; perms: number } }
+    '/api/v1/files/{id}/grants': { query: any; params: IdParams; body: SetGrantReq; headers: any; response: { ok: boolean; perms: number } }
     '/api/v1/settings/desktop': { query: any; params: any; body: Partial<DesktopSettings>; headers: any; response: DesktopSettings }
+    '/api/v1/settings/system/share': { query: any; params: any; body: Partial<ShareSystemSettings>; headers: any; response: ShareSystemSettings }
     '/api/v1/users/ldap/config': { query: any; params: any; body: LdapConfigUpdate; headers: any; response: LdapConfigInfo }
   }
   patch: {
@@ -542,6 +629,7 @@ export type OpenAPIs = {
     '/api/v1/teams/{team_id}/members/{user_id}': { query: any; params: TeamIdParams & { user_id: string }; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}/grants/{ptype}/{pid}': { query: any; params: GrantParams; body: any; headers: any; response: OkResp }
+    '/api/v1/files/{id}/grants/{ptype}/{pid}': { query: any; params: GrantParams; body: any; headers: any; response: OkResp }
     '/api/v1/files/{id}': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/files/{id}/purge': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: OkResp }

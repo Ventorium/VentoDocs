@@ -35,10 +35,15 @@ function buildApps(): AppEntry[] {
       render: (win) => (
         <DirectoryView
           dirId={win.appState.dirId || null}
-          onNavigateDir={(dirId) =>
-            useWindows.getState().setAppState(win.id, dirId ? { dirId } : {})
+          initialScope={win.appState.scope === 'team' || win.appState.scope === 'me' ? win.appState.scope : null}
+          onNavigateDir={(dirId, scope) =>
+            useWindows.getState().setAppState(win.id, {
+              ...(dirId ? { dirId } : {}),
+              ...(scope && scope !== 'personal' ? { scope } : {}),
+            })
           }
           onOpenFile={(fileId) => useWindows.getState().open('file', { fileId })}
+          onTitleChange={(t) => useWindows.getState().setTitle(win.id, t)}
         />
       ),
     }),

@@ -349,10 +349,17 @@ impl Files {
             return Err(StoreError::NameConflict(row.name.clone()));
         }
 
+        // 并发窗口：预检后出现同名存活文件 → 部分唯一索引 23505 → NameConflict（勿 500）
         sqlx::query("UPDATE files SET deleted_at = NULL, updated_at = now() WHERE id = $1")
             .bind(file_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::Database(db) if db.code().as_deref() == Some("23505") => {
+                    StoreError::NameConflict(row.name.clone())
+                }
+                other => other.into(),
+            })?;
         super::audit::Audit::log_tx(
             &mut *tx,
             Some(actor),
@@ -385,7 +392,13 @@ impl Files {
         .bind(target_dir)
         .bind(new_name)
         .execute(&mut *tx)
-        .await?
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(db) if db.code().as_deref() == Some("23505") => {
+                StoreError::NameConflict(format!("同级已存在同名文件：{new_name}"))
+            }
+            other => other.into(),
+        })?
         .rows_affected();
         if n == 0 {
             return Err(StoreError::NotFound(format!("回收站文件 {file_id}")));

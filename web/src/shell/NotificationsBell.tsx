@@ -198,7 +198,14 @@ export default function NotificationsBell({ onOpenAudits }: { onOpenAudits?: () 
               </div>
               {isAdmin && onOpenAudits && (
                 <div className="vd-notif-foot">
-                  <a onClick={onOpenAudits}>查看全部审计日志</a>
+                  <a
+                    onClick={() => {
+                      setOpen(false)
+                      onOpenAudits()
+                    }}
+                  >
+                    查看全部审计日志
+                  </a>
                 </div>
               )}
             </div>

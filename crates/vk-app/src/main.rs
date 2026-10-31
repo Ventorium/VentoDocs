@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use include_dir::{Dir, include_dir};
-use tracing::info;
+use tracing::{info, warn};
 
 /// 内嵌的前端构建产物（web/dist）。
 const WEB_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../web/dist");
@@ -97,10 +97,24 @@ async fn main() -> anyhow::Result<()> {
         vk_store::object_store::ObjectStore::new(std::path::Path::new(&data_dir).join("objects"));
     objects.ensure_dirs().await?;
 
+    // M2.24：分享端口——第二监听，独立端口服务同一应用（/s/{token} 分享链接对外）。
+    // 端口优先级：system_settings.share.port（管理端可改）> VENTO_SHARE_PORT > 8090；
+    // 修改端口需重启服务生效（管理端设置页有提示）。
+    let share_port: u16 = vk_store::repo::settings::SystemSettings::get(
+        db.pool(),
+        vk_api::settings::SHARE_KEY,
+    )
+    .await
+    .and_then(|v| v.get("port").and_then(serde_json::Value::as_u64))
+    .and_then(|p| u16::try_from(p).ok())
+    .or_else(|| std::env::var("VENTO_SHARE_PORT").ok().and_then(|v| v.parse().ok()))
+    .unwrap_or(vk_api::settings::DEFAULT_SHARE_PORT);
+
     let state = vk_api::AppState {
         db,
         objects,
         cfg: Arc::new(cfg),
+        share_port,
     };
     let app = vk_api::router(state.clone()).merge(static_files(state.clone()));
     // 发布子域名路由（§11）：{publish_id}.{VIENTO_PUBLISH_DOMAIN}
@@ -110,12 +124,43 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
-    info!(addr = %cli.bind, "VentoDocs 已启动");
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    info!(addr = %cli.bind, "VentoDocs 已启动（主端口）");
+
+    let share_addr = SocketAddr::from(([0, 0, 0, 0], share_port));
+    if share_port == cli.bind.port() {
+        warn!(addr = %share_addr, "分享端口与主端口相同，未启动分享监听");
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
+    } else {
+        match tokio::net::TcpListener::bind(share_addr).await {
+            Ok(share_listener) => {
+                info!(addr = %share_addr, "VentoDocs 已启动（分享端口）");
+                let (main_result, _share_result) = tokio::join!(
+                    axum::serve(
+                        listener,
+                        app.clone().into_make_service_with_connect_info::<SocketAddr>(),
+                    ),
+                    axum::serve(
+                        share_listener,
+                        app.into_make_service_with_connect_info::<SocketAddr>(),
+                    ),
+                );
+                // 主端口异常退出；分享端口先行异常（如网络变更）不影响主服务。
+                main_result?;
+            }
+            Err(e) => {
+                warn!(addr = %share_addr, error = %e, "分享端口绑定失败，该端口上的分享链接不可用");
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .await?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -249,6 +294,19 @@ fn static_files(state: vk_api::AppState) -> axum::Router {
             .unwrap_or_default()
     }
 
+    /// M2.29：浏览器默认请求 /favicon.ico（此前被 SPA 回退返回 index.html，favicon 加载失败）。
+    /// 返回主站 favicon 的 SVG 字节（声明 image/svg+xml），主站与分享端口统一生效；
+    /// 发布子域名由站点服务接管（site.rs 内同路径回退主站图标）。
+    async fn favicon_route() -> axum::response::Response {
+        const FA: &[u8] = include_bytes!("../../../web/dist/favicon.svg");
+        axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/svg+xml")
+            .header(header::CACHE_CONTROL, "public, max-age=86400")
+            .body(axum::body::Body::from(FA.to_vec()))
+            .unwrap_or_default()
+    }
+
     /// 官方构建硬编码的根绝对路径别名：X2T worker 以 `/sdkjs/...`（站点根）请求，
     /// 部署在子路径（`/document`）时必须同盘服务同一目录，否则 worker 脚本 404/回退 HTML。
     async fn sdkjs_alias(
@@ -362,6 +420,7 @@ fn static_files(state: vk_api::AppState) -> axum::Router {
         // 部署在 /document 子路径时须把根下 sdkjs/ 也指回 editor-dist，否则 worker 404/被 SPA 回退。
         .route("/sdkjs/{*path}", get(sdkjs_alias))
         .route("/sw.js", get(sw_stub))
+        .route("/favicon.ico", get(favicon_route))
         .route("/{*path}", get(static_or_index))
         .with_state(st)
 }
@@ -385,15 +444,18 @@ async fn run_next(
     next.run(req).await
 }
 
-/// 发布子域名路由（§11）：Host = `{publish_id}.{VIENTO_PUBLISH_DOMAIN}`。
+/// 发布子域名路由（§11 / M2.28）：Host = `{publish_id}.{VIENTO_PUBLISH_DOMAIN}`。
 ///
-/// - 站点已启用 → 页面路径重写为 `/p/{publish_id}{原路径}`；`/api/`、`/assets/`、
-///   `/_env` 原样放行（公开 API 与静态资源在任意主机头下均可用）。
+/// - 站点已启用 → 直接返回站点原始文件（`site::serve_site` 三模式：static / spa / file_index），
+///   不再重写进文档浏览器 SPA。
 /// - 站点不存在 / 停用 / 目录已删除 → 整站 410 + `Cache-Control: no-store`。
+/// - `/api/` 与 `/_env` 原样放行（公开 API 与环境信息在任意主机头下可用）。
 /// - 未配置域名或非 `{pid}.{domain}` 主机头 → 直接放行。
+/// - 主机头解析顺序：`X-Forwarded-Host`（首值）→ `Host`，均去掉端口并转小写
+///   （适配会重写 Host 的前置代理）。
 async fn host_publish_route(
     axum::extract::State(state): axum::extract::State<vk_api::AppState>,
-    mut req: axum::extract::Request,
+    req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let Some(domain) = state
@@ -405,19 +467,23 @@ async fn host_publish_route(
     else {
         return run_next(next, req).await;
     };
-    let Some(host) = req
-        .headers()
-        .get(axum::http::header::HOST)
+    let headers = req.headers();
+    let xfh = axum::http::header::HeaderName::from_static("x-forwarded-host");
+    // 主机头候选：X-Forwarded-Host 首值优先，其次 Host（代理可能重写 Host）
+    let mut host: Option<String> = headers
+        .get(&xfh)
         .and_then(|v| v.to_str().ok())
-    else {
+        .and_then(|v| v.split(',').next())
+        .map(|s| strip_port(s.trim().to_lowercase()));
+    if host.as_deref().is_none_or(str::is_empty) {
+        host = headers
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| strip_port(s.trim().to_lowercase()));
+    }
+    let Some(host) = host else {
         return run_next(next, req).await;
     };
-    let host = host
-        .split_once(':')
-        .map(|(h, _)| h)
-        .unwrap_or(host)
-        .trim()
-        .to_lowercase();
     let Some(pid) = host.strip_suffix(&format!(".{domain}")) else {
         return run_next(next, req).await;
     };
@@ -427,6 +493,11 @@ async fn host_publish_route(
             .bytes()
             .all(|b| b.is_ascii_lowercase() || (b'2'..=b'9').contains(&b))
     {
+        return run_next(next, req).await;
+    }
+    // 公开 API 与环境信息原样放行
+    let path = req.uri().path();
+    if path.starts_with("/api/") || path == "/_env" {
         return run_next(next, req).await;
     }
     let w = match vk_store::repo::publishes::Publishes::get_by_publish_id(state.db.pool(), pid).await {
@@ -442,25 +513,28 @@ async fn host_publish_route(
     if !w.publish.enabled || w.directory.deleted_at.is_some() {
         return gone_response();
     }
-    // 页面路径重写；API/静态资源/环境信息原样放行
-    let old = req.uri().clone();
-    let path = old.path().to_string();
-    if !path.starts_with("/api/")
-        && !path.starts_with("/assets/")
-        && !path.starts_with("/document")
-        && path != "/_env"
-    {
-        let pq = match old.query() {
-            Some(q) => format!("/p/{pid}{path}?{q}"),
-            None => format!("/p/{pid}{path}"),
-        };
-        if let Ok(pq) = axum::http::uri::PathAndQuery::from_maybe_shared(pq) {
-            let mut parts = old.into_parts();
-            parts.path_and_query = Some(pq);
-            if let Ok(uri) = axum::http::uri::Uri::from_parts(parts) {
-                *req.uri_mut() = uri;
+    // M2.28：直接服务站点原始文件（三模式），不再重写路径
+    let method = req.method().clone();
+    let raw_path = req.uri().path().to_string();
+    let query = req.uri().query().map(|s| s.to_string());
+    let hdrs = headers.clone();
+    let body = if *req.method() == axum::http::Method::POST {
+        match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
+            Ok(b) => Some(b.to_vec()),
+            Err(e) => {
+                tracing::warn!(error = %e, "站点请求体读取失败");
+                None
             }
         }
-    }
-    run_next(next, req).await
+    } else {
+        None
+    };
+    vk_api::site::serve_site(&state, &w, &method, &hdrs, &raw_path, query, body).await
+}
+
+/// 去端口（`example.com:8090` → `example.com`）。
+fn strip_port(s: String) -> String {
+    s.split_once(':')
+        .map(|(h, _)| h.to_string())
+        .unwrap_or(s)
 }

@@ -1,6 +1,8 @@
 //! 目录网站发布 API：登录态管理（开启/关闭/查询）+ 公开访问端点（§11）。
 //!
-//! 公开端点无会话；策略 login 时校验 Authorization Bearer JWT。
+//! 公开端点无会话；策略 login = 站点密码门（M2.26）：访问者输入发布时设置的站点密码，
+//! 后端签发 24h 站点 token（sub=publish:{publish_id}），与 VentoDocs 系统账号无关。
+//! 有效发布域名 = 环境变量 VIENTO_PUBLISH_DOMAIN（.env），修改后需重启服务生效。
 //! 不存在/停用/目录已删除 → 410 + Cache-Control: no-store。
 //! 内容 = 子树当前状态（无快照）；公开 JSON 响应带 no-cache + ETag。
 
@@ -19,9 +21,8 @@ use vk_store::repo::directories::Directories;
 use vk_store::repo::files::Files;
 use vk_store::repo::grants::Grants;
 use vk_store::repo::publishes::{Publishes, PublishWithDir};
-use vk_store::repo::users::Users;
 
-use crate::auth::{parse_token, AuthUser};
+use crate::auth::AuthUser;
 use crate::AppState;
 use crate::error::ApiError;
 use crate::files;
@@ -30,11 +31,23 @@ use crate::shares::entries_json;
 /// 校验发布策略。
 const VALID_POLICIES: &[&str] = &["anon", "login", "preview_only"];
 
+/// M2.28：站点模式。static = 纯静态；spa = Vite try_files 回退；file_index = 目录文件列表。
+pub const VALID_SITE_MODES: &[&str] = &["static", "spa", "file_index"];
+
+/// M2.26：站点 token 有效期（秒）。
+const SITE_TOKEN_TTL_SECONDS: i64 = 24 * 3600;
+
 #[derive(Deserialize)]
 pub struct PublishReq {
-    /// anon（默认匿名可读）| login（需登录）| preview_only（匿名仅预览）
+    /// anon（默认匿名可读）| login（需站点密码）| preview_only（匿名仅预览）
     #[serde(default = "default_policy")]
     pub policy: String,
+    /// M2.26：站点访问密码（login 策略；空/缺省 = 保持不变或清除）。
+    #[serde(default)]
+    pub password: Option<String>,
+    /// M2.28：站点模式 static | spa | file_index（缺省 = 新建用 static / 更新沿用原值）。
+    #[serde(default)]
+    pub site_mode: Option<String>,
 }
 
 fn default_policy() -> String {
@@ -52,6 +65,15 @@ fn publish_url(domain: Option<&str>, publish_id: &str) -> Option<String> {
     domain.map(|d| format!("https://{}.{}/", publish_id, d))
 }
 
+/// M2.27：有效发布域名 = 环境变量 VIENTO_PUBLISH_DOMAIN（.env）唯一来源；
+/// 管理页面只读展示，不再从系统设置读取。未设置/空 = 发布功能不可用。
+pub fn effective_publish_domain(state: &AppState) -> Option<String> {
+    state.cfg.publish_domain.clone().filter(|s| !s.trim().is_empty())
+}
+
+/// M2.26：站点 token 有效期（小时）。
+const SITE_TOKEN_TTL_HOURS: u64 = 24;
+
 /// 开启（或更新策略）目录发布。
 pub async fn enable(
     State(state): State<AppState>,
@@ -59,22 +81,52 @@ pub async fn enable(
     Path(id): Path<Uuid>,
     Json(body): Json<PublishReq>,
 ) -> Result<Json<PublishOut>, ApiError> {
-    let domain = state.cfg.publish_domain.as_deref();
-    if domain.is_none_or(str::is_empty) {
-        return Err(ApiError::bad_request(
-            "管理员未配置发布域名 VIENTO_PUBLISH_DOMAIN",
-        ));
-    }
     if !VALID_POLICIES.contains(&body.policy.as_str()) {
         return Err(ApiError::bad_request("policy 仅支持 anon | login | preview_only"));
     }
-    let pool = state.db.pool();
-    let _dir = Directories::get(pool, id).await?;
-    let have = Grants::resolve(pool, user.id, id, user.is_admin).await?;
-    if !have.contains(Perm::PUBLISH) {
-        return Err(ApiError::forbidden("无权限发布该目录"));
+    let site_mode_req = body.site_mode.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(m) = site_mode_req {
+        if !VALID_SITE_MODES.contains(&m) {
+            return Err(ApiError::bad_request("site_mode 仅支持 static | spa | file_index"));
+        }
     }
-    let publish = Publishes::upsert_enable(pool, id, &body.policy, user.id).await?;
+    let pool = state.db.pool();
+    let dir = Directories::get(pool, id).await?;
+    // M2.35：仅目录创建者可发布（管理员无旁路；发布状态查询不受影响）
+    if dir.created_by != Some(user.id) {
+        return Err(ApiError::forbidden("仅目录创建者可发布该目录"));
+    }
+    // M2.27：有效发布域名 = 环境变量 VIENTO_PUBLISH_DOMAIN（.env）唯一来源
+    let domain = effective_publish_domain(&state);
+    if domain.is_none() {
+        return Err(ApiError::bad_request(
+            "尚未配置发布域名：请在服务器 .env 中设置 VIENTO_PUBLISH_DOMAIN=你的域名（如 sites.example.com，无需协议头），并配置泛解析 *.域名 指向服务器 IP，重启服务后再发布",
+        ));
+    }
+    // M2.26：站点密码（login 策略）——提供则更新；缺省时沿用原 login 密码，否则必须提供
+    let password = body.password.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let existing = Publishes::get_by_directory(pool, id).await?;
+    let password_hash = if body.policy == "login" {
+        match password {
+            Some(p) => Some(vk_store::repo::users::hash_password(p)?),
+            None => existing
+                .as_ref()
+                .filter(|e| e.policy == "login")
+                .and_then(|e| e.password_hash.clone()),
+        }
+    } else {
+        None
+    };
+    if body.policy == "login" && password_hash.is_none() {
+        return Err(ApiError::bad_request("「需密码」策略必须设置站点访问密码"));
+    }
+    // M2.28：站点模式——提供则更新；缺省时沿用原值，新建默认 static（纯静态）
+    let site_mode = match site_mode_req {
+        Some(m) => m.to_string(),
+        None => existing.map(|e| e.site_mode).unwrap_or_else(|| "static".into()),
+    };
+    let publish = Publishes::upsert_enable(pool, id, &body.policy, password_hash.as_deref(), &site_mode, user.id)
+        .await?;
     Audit::log(
         pool,
         Some(user.id),
@@ -85,13 +137,15 @@ pub async fn enable(
         serde_json::json!({
             "publish_id": publish.publish_id,
             "policy": publish.policy,
-            "url": publish_url(domain, &publish.publish_id),
+            "has_password": publish.has_password,
+            "site_mode": publish.site_mode,
+            "url": publish_url(domain.as_deref(), &publish.publish_id),
         }),
         None,
     )
     .await?;
     Ok(Json(PublishOut {
-        url: publish_url(domain, &publish.publish_id),
+        url: publish_url(domain.as_deref(), &publish.publish_id),
         publish,
     }))
 }
@@ -103,10 +157,10 @@ pub async fn disable(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let pool = state.db.pool();
-    let _dir = Directories::get(pool, id).await?;
-    let have = Grants::resolve(pool, user.id, id, user.is_admin).await?;
-    if !have.contains(Perm::PUBLISH) {
-        return Err(ApiError::forbidden("无权限发布该目录"));
+    let dir = Directories::get(pool, id).await?;
+    // M2.35：仅目录创建者可关闭发布（管理员无旁路）
+    if dir.created_by != Some(user.id) {
+        return Err(ApiError::forbidden("仅目录创建者可管理该目录的发布"));
     }
     Publishes::disable(pool, id).await?;
     Audit::log(
@@ -136,14 +190,15 @@ pub async fn get(
         return Err(ApiError::forbidden("无权限发布该目录"));
     }
     let publish = Publishes::get_by_directory(pool, id).await?;
+    let domain = effective_publish_domain(&state);
     let url = publish
         .as_ref()
-        .and_then(|p| publish_url(state.cfg.publish_domain.as_deref(), &p.publish_id));
+        .and_then(|p| publish_url(domain.as_deref(), &p.publish_id));
     Ok(Json(serde_json::json!({ "publish": publish, "url": url })))
 }
 
 // ---------------------------------------------------------------------------
-// 公开端点（无会话；login 策略下校验 Bearer JWT）
+// 公开端点（无会话；login 策略 = 站点密码门，M2.26）
 // ---------------------------------------------------------------------------
 
 /// 410 GONE + Cache-Control: no-store（站点不存在/停用/已删除，禁止浏览器缓存）。
@@ -193,30 +248,67 @@ async fn load_publish(pool: &sqlx::PgPool, publish_id: &str) -> Result<PublishWi
     Ok(w)
 }
 
-/// 发布策略访问校验：login 需要有效 JWT 且账号未禁用。
+/// M2.26 发布策略访问校验：login = 站点密码门（24h 站点 token，sub=publish:{publish_id}），
+/// 与 VentoDocs 系统账号完全无关；系统账号 token（UUID sub）在此被拒绝。
 async fn check_policy(
     state: &AppState,
-    pool: &sqlx::PgPool,
-    policy: &str,
+    publish: &PublishedDir,
     headers: &HeaderMap,
 ) -> Result<(), Box<Response>> {
-    if policy == "anon" || policy == "preview_only" {
+    if publish.policy == "anon" || publish.policy == "preview_only" {
         return Ok(());
     }
     // policy == "login"
+    let Some(hash) = publish.password_hash.as_deref() else {
+        return Err(Box::new(
+            ApiError::unauthorized_with("站点尚未设置访问密码，请联系管理员").into_response(),
+        ));
+    };
     let Some(token) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
     else {
-        return Err(Box::new(ApiError::unauthorized().into_response()));
+        return Err(Box::new(ApiError::unauthorized_with("该站点需输入访问密码").into_response()));
     };
-    let (uid, _role) = parse_token(&state.cfg.jwt_secret, token)
-        .map_err(|e| Box::new(e.into_response()))?;
-    match Users::get_by_id(pool, uid).await {
-        Ok(u) if !u.disabled => Ok(()),
-        _ => Err(Box::new(ApiError::unauthorized().into_response())),
+    if !crate::auth::verify_site_token(&state.cfg.jwt_secret, token, &publish.publish_id) {
+        return Err(Box::new(ApiError::unauthorized_with("访问令牌无效或已过期，请重新输入密码").into_response()))
     }
+    let _ = hash; // 密码已在签发 token 时验证；此处仅确认已配置
+    Ok(())
+}
+
+/// 站点密码校验：`POST /api/v1/public/published/{publish_id}/password`。
+/// 登录态无关（公开端点）；密码正确 → 签发 24h 站点 token；错误 → 401。
+#[derive(Deserialize)]
+pub struct SitePasswordReq {
+    pub password: String,
+}
+
+pub async fn public_verify_password(
+    State(state): State<AppState>,
+    Path(publish_id): Path<String>,
+    Json(body): Json<SitePasswordReq>,
+) -> Result<Response, ApiError> {
+    let pool = state.db.pool();
+    let w = match load_publish(pool, &publish_id).await {
+        Ok(w) => w,
+        Err(resp) => return Ok(*resp),
+    };
+    if w.publish.policy != "login" {
+        return Err(ApiError::bad_request("该站点无需密码"));
+    }
+    let Some(hash) = w.publish.password_hash.clone() else {
+        return Err(ApiError::unauthorized_with("站点尚未设置访问密码，请联系管理员"));
+    };
+    if body.password.trim().is_empty()
+        || !vk_store::repo::users::verify_password(&body.password, &hash)
+    {
+        return Err(ApiError::unauthorized_with("站点密码错误"));
+    }
+    let token = crate::auth::sign_site_token(&state.cfg.jwt_secret, &w.publish.publish_id, SITE_TOKEN_TTL_HOURS)?;
+    let body = serde_json::json!({ "token": token, "expires_in": SITE_TOKEN_TTL_SECONDS });
+    Ok(json_no_cache(&body))
 }
 
 /// 公开站点元信息：`GET /api/v1/public/published/{publish_id}`。
@@ -230,7 +322,7 @@ pub async fn public_meta(
         Ok(w) => w,
         Err(resp) => return Ok(*resp),
     };
-    if let Err(resp) = check_policy(&state, pool, &w.publish.policy, &headers).await {
+    if let Err(resp) = check_policy(&state, &w.publish, &headers).await {
         return Ok(*resp);
     }
     Ok(json_no_cache(&serde_json::json!({
@@ -258,7 +350,7 @@ pub async fn public_entries(
         Ok(w) => w,
         Err(resp) => return Ok(*resp),
     };
-    if let Err(resp) = check_policy(&state, pool, &w.publish.policy, &headers).await {
+    if let Err(resp) = check_policy(&state, &w.publish, &headers).await {
         return Ok(*resp);
     }
     let root = w.directory;
@@ -286,7 +378,7 @@ pub async fn public_preview(
         Ok(w) => w,
         Err(resp) => return Ok(*resp),
     };
-    if let Err(resp) = check_policy(&state, pool, &w.publish.policy, &headers).await {
+    if let Err(resp) = check_policy(&state, &w.publish, &headers).await {
         return Ok(*resp);
     }
     let root = w.directory;
@@ -312,7 +404,7 @@ pub async fn public_download(
         Ok(w) => w,
         Err(resp) => return Ok(*resp),
     };
-    if let Err(resp) = check_policy(&state, pool, &w.publish.policy, &headers).await {
+    if let Err(resp) = check_policy(&state, &w.publish, &headers).await {
         return Ok(*resp);
     }
     if w.publish.policy == "preview_only" {

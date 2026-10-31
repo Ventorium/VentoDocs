@@ -137,7 +137,8 @@ where
 }
 
 /// 从扩展名猜测 MIME（避免引入额外依赖）。
-fn guess_mime(name: &str) -> String {
+/// M2.29：`pub(crate)` 供站点文件服务修正 DB 中遗留的 octet-stream（html 被浏览器当下载）。
+pub(crate) fn guess_mime(name: &str) -> String {
     let ext = name
         .rsplit_once('.')
         .map(|(_, e)| e.to_lowercase())
@@ -153,6 +154,16 @@ fn guess_mime(name: &str) -> String {
         "txt" | "log" | "md" => "text/plain; charset=utf-8",
         "csv" => "text/csv; charset=utf-8",
         "json" => "application/json",
+        // M2.29：网页族扩展名（站点静态/SPA 文件服务依赖它纠正 Content-Type）
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "xml" => "application/xml",
+        "ico" => "image/x-icon",
+        "wasm" => "application/wasm",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "webmanifest" => "application/manifest+json",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
@@ -227,6 +238,198 @@ fn file_stream(file: tokio::fs::File) -> impl Stream<Item = Result<Bytes, io::Er
     })
 }
 
+// ─────────────── M2.23：文件级授权 ───────────────
+// 文件可拥有独立于所在目录的授权（file_grants）：某主体存在文件级授权时，
+// 其在该文件上的有效权限取文件授权并集，覆盖所在目录链上同一主体的目录授权；
+// 无任何文件级授权时回退目录链解析（完全向后兼容）。
+// 管理权限 = 文件创建者（M2.35：管理员不再拥有旁路，管理操作归资源原有人）。
+
+#[derive(Serialize)]
+pub struct FileGrantOut {
+    pub id: Uuid,
+    pub file_id: Uuid,
+    pub principal_type: String,
+    pub principal_id: Uuid,
+    pub principal_name: String,
+    pub perms: u16,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize)]
+pub struct GrantOut {
+    pub id: Uuid,
+    pub directory_id: Uuid,
+    pub principal_type: String,
+    pub principal_id: Uuid,
+    pub principal_name: String,
+    pub perms: u16,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize)]
+pub struct InheritedGrants {
+    pub directory_id: Uuid,
+    pub directory_name: String,
+    pub grants: Vec<GrantOut>,
+}
+
+#[derive(Serialize)]
+pub struct FileGrantsOut {
+    pub file_grants: Vec<FileGrantOut>,
+    pub inherited: InheritedGrants,
+}
+
+/// 主体显示名（用户显示名 / 团队名），解析失败回退 uuid 字符串。
+async fn principal_name(pool: &sqlx::PgPool, principal_type: &str, principal_id: Uuid) -> String {
+    if principal_type == "user" {
+        Users::get_by_id(pool, principal_id)
+            .await
+            .ok()
+            .map(|u| u.display_name)
+            .unwrap_or_else(|| principal_id.to_string())
+    } else {
+        vk_store::repo::teams::Teams::get(pool, principal_id)
+            .await
+            .ok()
+            .map(|t| t.name)
+            .unwrap_or_else(|| principal_id.to_string())
+    }
+}
+
+/// 文件授权管理入口：仅文件创建者（M2.35：管理员无旁路）。
+fn require_file_creator(user: &AuthUser, file: &FileMeta) -> Result<(), ApiError> {
+    if file.created_by == Some(user.id) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("仅文件创建者可管理该文件的授权"))
+    }
+}
+
+/// 文件授权管理：列出该文件的独立授权 + 所在目录的继承授权。
+pub async fn list_file_grants(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<FileGrantsOut>, ApiError> {
+    let pool = state.db.pool();
+    let file = Files::get_meta(pool, id).await?;
+    require_file_creator(&user, &file)?;
+    let dir = Directories::get(pool, file.directory_id).await?;
+    let file_grants = Grants::list_for_file(pool, id).await?;
+    let inherited = Grants::list_for_directory(pool, file.directory_id).await?;
+    let file_names = file_grants
+        .iter()
+        .map(|g| principal_name(pool, &g.principal_type, g.principal_id))
+        .collect::<futures_util::future::JoinAll<_>>()
+        .await
+        .into_iter()
+        .collect::<Vec<_>>();
+    let file_out: Vec<FileGrantOut> = file_grants
+        .iter()
+        .zip(file_names)
+        .map(
+            |(g, name)| FileGrantOut {
+                id: g.id,
+                file_id: g.file_id,
+                principal_type: g.principal_type.clone(),
+                principal_id: g.principal_id,
+                principal_name: name,
+                perms: g.perms,
+                created_at: g.created_at,
+            },
+        )
+        .collect();
+    let inh_names = inherited
+        .iter()
+        .map(|g| principal_name(pool, &g.principal_type, g.principal_id))
+        .collect::<futures_util::future::JoinAll<_>>()
+        .await
+        .into_iter()
+        .collect::<Vec<_>>();
+    let inh_out: Vec<GrantOut> = inherited
+        .iter()
+        .zip(inh_names)
+        .map(
+            |(g, name)| GrantOut {
+                id: g.id,
+                directory_id: g.directory_id,
+                principal_type: g.principal_type.clone(),
+                principal_id: g.principal_id,
+                principal_name: name,
+                perms: g.perms,
+                created_at: g.created_at,
+            },
+        )
+        .collect();
+    Ok(Json(FileGrantsOut {
+        file_grants: file_out,
+        inherited: InheritedGrants {
+            directory_id: dir.id,
+            directory_name: dir.name.clone(),
+            grants: inh_out,
+        },
+    }))
+}
+
+/// 文件授权管理：创建/更新某主体在文件上的授权（覆盖目录继承）。
+pub async fn set_file_grant(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::directories::SetGrantReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pool = state.db.pool();
+    let pt = match body.principal_type.as_str() {
+        "user" | "team" => body.principal_type.clone(),
+        _ => return Err(ApiError::bad_request("principal_type 仅支持 user 或 team")),
+    };
+    let perms = Perm::validate_ui_input(body.perms)?;
+    let file = Files::get_meta(pool, id).await?;
+    require_file_creator(&user, &file)?;
+    if pt == "user" {
+        Users::get_by_id(pool, body.principal_id).await?;
+    } else {
+        vk_store::repo::teams::Teams::get(pool, body.principal_id).await?;
+    }
+    Grants::upsert_for_file(pool, id, &pt, body.principal_id, perms).await?;
+    Audit::log(
+        pool,
+        Some(user.id),
+        "admin",
+        "file_grant_set",
+        Some("file"),
+        Some(&id.to_string()),
+        serde_json::json!({ "principal_type": pt, "principal_id": body.principal_id, "perms": body.perms }),
+        None,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true, "perms": perms.bits() })))
+}
+
+/// 文件授权管理：移除某主体在文件上的授权（该主体在此文件上恢复目录继承权限）。
+pub async fn remove_file_grant(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path((id, principal_type, principal_id)): Path<(Uuid, String, Uuid)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pool = state.db.pool();
+    let file = Files::get_meta(pool, id).await?;
+    require_file_creator(&user, &file)?;
+    Grants::remove_for_file(pool, id, &principal_type, principal_id).await?;
+    Audit::log(
+        pool,
+        Some(user.id),
+        "admin",
+        "file_grant_remove",
+        Some("file"),
+        Some(&id.to_string()),
+        serde_json::json!({ "principal_type": principal_type, "principal_id": principal_id }),
+        None,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 /// 上传：multipart 单文件 → 对象存储（流式 sha256）→ 元数据行。
 pub async fn upload(
     State(state): State<AppState>,
@@ -295,6 +498,9 @@ pub struct FileOut {
     pub file: FileMeta,
     pub lock: Option<FileLock>,
     pub my_perms: u16,
+    /// M2.36：当前用户在此文件上的授权权限位（不含管理员旁路；文件创建者恒为
+    /// ALL）——文件详情页据此按「实际授权」显隐编辑等按钮。
+    pub granted_perms: u16,
 }
 
 pub async fn meta(
@@ -307,10 +513,13 @@ pub async fn meta(
     let file = Files::get_meta(pool, id).await?;
     let lock = lock_info(pool, id).await?;
     let perms = Grants::resolve_for_file(pool, user.id, id, user.is_admin).await?;
+    // M2.36：不含管理员旁路的授权权限位（文件创建者恒为 ALL）
+    let granted = Grants::resolve_for_file(pool, user.id, id, false).await?;
     Ok(Json(FileOut {
         file,
         lock,
         my_perms: perms.bits(),
+        granted_perms: granted.bits(),
     }))
 }
 

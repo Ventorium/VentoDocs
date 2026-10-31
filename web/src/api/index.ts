@@ -5,6 +5,9 @@ import { isZipFileId, parseZipFileId } from '@/lib/zipEntry'
 import type { OpenAPIs } from './schema'
 
 const PUBLIC_PATHS = ['/api/v1/auth/login', '/api/v1/auth/bootstrap']
+// M2.35: 只读权限探测（GET grants/shares/publish）对非创建者预期返回 403，
+// 调用方已按 error 静默降级；errorHandler 不再为此弹错误提示。写操作的 403 仍照常提示。
+const SILENT_403_PROBE = /\/(grants|shares|publish)(\/|$|\?)/
 
 export const client = createFetchClient<OpenAPIs>({
   requestTimeoutMs: 10000,
@@ -21,9 +24,15 @@ export const client = createFetchClient<OpenAPIs>({
     }
     return response
   },
-  async errorHandler(_request, response, error) {
+  async errorHandler(request, response, error) {
     if (error) {
       msg.error(error.message || '网络错误')
+    } else if (
+      response?.status === 403 &&
+      (request.init?.method ?? 'get').toUpperCase() === 'GET' &&
+      SILENT_403_PROBE.test(request.url)
+    ) {
+      return
     } else {
       let detail = '服务器错误'
       try {

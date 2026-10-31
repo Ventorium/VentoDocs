@@ -1,6 +1,7 @@
 /**
  * 权限位（与 vk-core/src/perm.rs 同步）。
- * 前 8 位为普通用户可配置；AGENT_* 为 v2 保留位，UI 不展示。
+ * 前 6 位为普通用户可配置（授权面板复选框）；SHARE/PUBLISH 自 M2.35 起不再可授权
+ *（仅资源创建者本人可操作分享/发布），常量保留供位值解析；AGENT_* 为 v2 保留位，UI 不展示。
  */
 export const PERM = {
   READ_PREVIEW: 1,
@@ -15,7 +16,8 @@ export const PERM = {
 
 export type PermBit = (typeof PERM)[keyof typeof PERM]
 
-/** 普通用户可配置的全部权限（UI 授权面板复选框）。 */
+/** 普通用户可配置的全部权限（UI 授权面板复选框）。
+ * M2.35 起移除 SHARE/PUBLISH：分享与网站发布仅资源创建者本人可操作，不可通过授权委派。 */
 export const USER_CONFIGURABLE_PERMS: { bit: PermBit; label: string }[] = [
   { bit: PERM.READ_PREVIEW, label: '预览' },
   { bit: PERM.DOWNLOAD, label: '下载' },
@@ -23,8 +25,6 @@ export const USER_CONFIGURABLE_PERMS: { bit: PermBit; label: string }[] = [
   { bit: PERM.MODIFY_RENAME, label: '修改' },
   { bit: PERM.MOVE_COPY, label: '移动复制' },
   { bit: PERM.DELETE_RESTORE, label: '删除恢复' },
-  { bit: PERM.SHARE, label: '分享' },
-  { bit: PERM.PUBLISH, label: '网站发布' },
 ]
 
 export function hasPerm(perms: number, bit: PermBit): boolean {

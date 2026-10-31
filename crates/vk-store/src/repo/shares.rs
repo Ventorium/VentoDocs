@@ -8,7 +8,7 @@ use vk_core::ids::gen_share_token;
 use vk_core::model::Share;
 
 const SHARE_SELECT: &str = "id, token, shareable_type, shareable_id, password_hash, expires_at, \
-     max_downloads, download_count, access_count, preview_only, revoked, created_by, created_at";
+     max_downloads, download_count, access_count, preview_only, revoked, scope, created_by, created_at";
 
 #[derive(FromRow)]
 struct ShareRow {
@@ -23,6 +23,7 @@ struct ShareRow {
     access_count: i32,
     preview_only: bool,
     revoked: bool,
+    scope: String,
     created_by: Option<Uuid>,
     created_at: DateTime<Utc>,
 }
@@ -40,6 +41,7 @@ fn to_share(r: &ShareRow) -> Share {
         access_count: r.access_count,
         preview_only: r.preview_only,
         revoked: r.revoked,
+        scope: r.scope.clone(),
         created_by: r.created_by,
         created_at: r.created_at,
     }
@@ -58,14 +60,15 @@ impl Shares {
         expires_at: Option<DateTime<Utc>>,
         max_downloads: Option<i32>,
         preview_only: bool,
+        scope: &str,
         created_by: Uuid,
     ) -> Result<Share> {
         let id = Uuid::now_v7();
         let token = gen_share_token();
         sqlx::query(
             "INSERT INTO shares (id, token, shareable_type, shareable_id, password_hash,
-                                 expires_at, max_downloads, preview_only, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                                 expires_at, max_downloads, preview_only, scope, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(id)
         .bind(&token)
@@ -75,6 +78,7 @@ impl Shares {
         .bind(expires_at)
         .bind(max_downloads)
         .bind(preview_only)
+        .bind(scope)
         .bind(created_by)
         .execute(pool)
         .await?;

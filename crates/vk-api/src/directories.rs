@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use vk_core::model::{Directory, EntryKind};
+use vk_core::model::{Directory, EntryKind, FileEntry, FileLock, FileMeta};
 use vk_core::perm::Perm;
 use vk_store::repo::audit::Audit;
 use vk_store::repo::directories::Directories;
@@ -22,6 +22,12 @@ async fn require_perm(
     dir_id: Uuid,
     need: Perm,
 ) -> Result<(), ApiError> {
+    // 根目录只是入口容器：任何登录用户可读（列表由 dir_page 按授权过滤），
+    // 且可在根下创建自己的顶级条目（创建后默认仅创建者可见，不影响他人）；
+    // 其余操作位仍走正常授权链。
+    if dir_id == vk_store::ROOT_DIR && (need == Perm::READ_PREVIEW || need == Perm::CREATE_UPLOAD) {
+        return Ok(());
+    }
     let have = Grants::resolve(pool, user.id, dir_id, user.is_admin).await?;
     if have.contains(need) {
         Ok(())
@@ -30,12 +36,34 @@ async fn require_perm(
     }
 }
 
-/// 目录页 = 目录信息 + 子项 + 当前用户有效权限位。
+/// 目录页子项 = EntryKind 序列化形状 + 当前用户在该子项上的授权权限位（M2.36）。
+/// my_perms 不含管理员旁路（目录创建者/文件创建者恒为 ALL）：前端据此
+/// 对他人共享的条目按「实际授权」动态显隐菜单与操作按钮，而非按管理员 1023。
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum PageEntry {
+    Directory {
+        kind: &'static str,
+        directory: Directory,
+        my_perms: u16,
+    },
+    File {
+        kind: &'static str,
+        file: FileMeta,
+        lock: Option<FileLock>,
+        my_perms: u16,
+    },
+}
+
+/// 目录页 = 目录信息 + 子项（含逐子项授权位） + 当前用户有效权限位。
 #[derive(Serialize)]
 pub struct DirectoryPage {
     pub directory: Directory,
-    pub children: Vec<EntryKind>,
+    pub children: Vec<PageEntry>,
     pub my_perms: u16,
+    /// M2.36：当前目录的授权权限位（不含管理员旁路；根目录与 require_perm 一致补 RP|CU）——
+    /// 前端按实际授权显隐「新建目录 / 上传文件」等列级操作。
+    pub granted_perms: u16,
 }
 
 async fn dir_page(
@@ -46,12 +74,66 @@ async fn dir_page(
 ) -> Result<DirectoryPage, ApiError> {
     let pool = state.db.pool();
     require_perm(pool, user, dir_id, need).await?;
-    let (directory, children) = Directories::list_children(pool, dir_id).await?;
-    let my_perms = Grants::resolve(pool, user.id, dir_id, user.is_admin).await?;
+    let (directory, mut children) = Directories::list_children(pool, dir_id).await?;
+    // 个人根视图（M2.38：对管理员同样生效）：只列出自己创建的顶层目录与自己上传的根文件。
+    // 他人上传的根文件无授权链、不可读，直接排除；
+    // 被分享的目录/深层内容一律走「团队共享 / 分享给我」栏位，不混入「个人文件」。
+    if dir_id == vk_store::ROOT_DIR {
+        children.retain(|e| match e {
+            EntryKind::Directory { directory } => directory.created_by == Some(user.id),
+            EntryKind::File(FileEntry { file, .. }) => file.created_by == Some(user.id),
+        });
+    }
+    let mut my_perms = Grants::resolve(pool, user.id, dir_id, user.is_admin).await?;
+    // 根目录是入口容器：任何登录用户可读并可在根下创建自己的顶级条目（与 require_perm 一致），
+    // 否则 UI 会隐藏「新建目录 / 上传文件」按钮，非管理员的个人视图将永远为空。
+    if !user.is_admin && dir_id == vk_store::ROOT_DIR {
+        my_perms.insert(Perm::READ_PREVIEW | Perm::CREATE_UPLOAD);
+    }
+    // M2.36：当前目录的授权权限位（不含管理员旁路）——根目录与 require_perm 一致补 RP|CU，
+    // 供前端按「实际授权」显隐「新建目录 / 上传文件」等列级操作。
+    let granted_perms = if dir_id == vk_store::ROOT_DIR {
+        Grants::resolve(pool, user.id, dir_id, false)
+            .await?
+            .union(Perm::READ_PREVIEW | Perm::CREATE_UPLOAD)
+    } else {
+        Grants::resolve(pool, user.id, dir_id, false).await?
+    };
+    // M2.36：逐个计算子项的授权权限位（不含管理员旁路；创建者恒为 ALL），
+    // 前端右键菜单 / 行内操作据此动态显隐。目录数通常较小，N+1 可接受。
+    let mut children_out: Vec<PageEntry> = Vec::with_capacity(children.len());
+    for entry in &children {
+        let child_perms = match entry {
+            EntryKind::Directory { directory } => {
+                Grants::resolve(pool, user.id, directory.id, false)
+                    .await?
+                    .bits()
+            }
+            EntryKind::File(FileEntry { file, .. }) => {
+                Grants::resolve_for_file(pool, user.id, file.id, false)
+                    .await?
+                    .bits()
+            }
+        };
+        children_out.push(match entry {
+            EntryKind::Directory { directory } => PageEntry::Directory {
+                kind: "directory",
+                directory: directory.clone(),
+                my_perms: child_perms,
+            },
+            EntryKind::File(FileEntry { file, lock }) => PageEntry::File {
+                kind: "file",
+                file: file.clone(),
+                lock: lock.clone(),
+                my_perms: child_perms,
+            },
+        });
+    }
     Ok(DirectoryPage {
         directory,
-        children,
+        children: children_out,
         my_perms: my_perms.bits(),
+        granted_perms: granted_perms.bits(),
     })
 }
 
@@ -210,12 +292,13 @@ pub async fn list_trashed(
     Ok(Json(result))
 }
 
-/// 授权管理入口：管理员或目录创建者。
-async fn can_manage_grants(user: &AuthUser, dir: &Directory) -> Result<(), ApiError> {
-    if user.is_admin || dir.created_by == Some(user.id) {
+/// 授权管理入口：仅目录创建者（M2.35：管理员不再拥有管理他人目录授权的旁路，
+/// 授权/分享等管理操作一律回归资源创建者本人；管理员的内容访问旁路不受影响）。
+pub async fn can_manage_grants(user: &AuthUser, dir: &Directory) -> Result<(), ApiError> {
+    if dir.created_by == Some(user.id) {
         Ok(())
     } else {
-        Err(ApiError::forbidden("仅管理员或目录创建者可管理授权"))
+        Err(ApiError::forbidden("仅目录创建者可管理授权"))
     }
 }
 
@@ -325,4 +408,49 @@ pub async fn remove_grant(
     )
     .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// 分享栏查询参数：scope=me 分享给我 / scope=team 团队共享。
+#[derive(Deserialize)]
+pub struct SharedQuery {
+    pub scope: String,
+}
+
+#[derive(Serialize)]
+pub struct SharedDirOut {
+    pub id: Uuid,
+    pub name: String,
+    pub path: String,
+    pub parent_id: Option<Uuid>,
+    pub created_by: Option<Uuid>,
+    pub owner_name: Option<String>,
+    pub team_name: Option<String>,
+    pub perms: u16,
+}
+
+/// 分享给我的目录列表（文件管理器左侧「团队共享 / 分享给我」栏位数据源）。
+pub async fn shared(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    axum::extract::Query(q): axum::extract::Query<SharedQuery>,
+) -> Result<Json<Vec<SharedDirOut>>, ApiError> {
+    if q.scope != "me" && q.scope != "team" {
+        return Err(ApiError::bad_request("scope 必须是 me 或 team"));
+    }
+    let pool = state.db.pool();
+    let dirs = Grants::list_shared(pool, user.id, &q.scope).await?;
+    Ok(Json(
+        dirs.iter()
+            .map(|d| SharedDirOut {
+                id: d.id,
+                name: d.name.clone(),
+                path: d.path.clone(),
+                parent_id: d.parent_id,
+                created_by: d.created_by,
+                owner_name: d.owner_name.clone(),
+                team_name: d.team_name.clone(),
+                perms: d.perms,
+            })
+            .collect(),
+    ))
 }

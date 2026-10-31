@@ -22,9 +22,9 @@ bitflags! {
         const MOVE_COPY        = 1 << 4;
         /// 删除（进回收站）、恢复
         const DELETE_RESTORE   = 1 << 5;
-        /// 创建/管理分享
+        /// 创建/管理分享（M2.35 起不再可授权：仅资源创建者可操作）
         const SHARE            = 1 << 6;
-        /// 开启/关闭目录网站发布
+        /// 开启/关闭目录网站发布（M2.35 起不再可授权：仅目录创建者可操作）
         const PUBLISH          = 1 << 7;
         /// Agent 读取文件内容（v2）
         const AGENT_READ       = 1 << 8;
@@ -34,7 +34,8 @@ bitflags! {
 }
 
 impl Perm {
-    /// v1 界面可配置的 8 位（不含 AGENT_*）。
+    /// v1 界面可配置的 6 位（不含 AGENT_*；M2.35 起分享/发布不再可授权，
+    /// 一律回归资源创建者本人）。
     pub fn user_configurable() -> Self {
         Self::READ_PREVIEW
             | Self::DOWNLOAD
@@ -42,14 +43,13 @@ impl Perm {
             | Self::MODIFY_RENAME
             | Self::MOVE_COPY
             | Self::DELETE_RESTORE
-            | Self::SHARE
-            | Self::PUBLISH
     }
 
-    /// 校验 UI 提交值：只允许 user_configurable 子集。
+    /// 校验 UI 提交值：只允许 user_configurable 子集（含任一不可授权位即拒绝）。
+    /// M2.35：修复旧实现 `contains(complement)` 仅在全部保留位同时出现时才报错的缺陷。
     pub fn validate_ui_input(value: u16) -> Result<Self, PermError> {
         let set = Self::from_bits_retain(value);
-        if set.contains(Self::user_configurable().complement()) {
+        if set.intersects(Self::user_configurable().complement()) {
             return Err(PermError::ReservedBits(set));
         }
         Ok(set)

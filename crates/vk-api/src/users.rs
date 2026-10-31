@@ -58,11 +58,9 @@ fn to_out(u: &User) -> UserOut {
     }
 }
 
-pub async fn list(
-    State(state): State<AppState>,
-    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
-) -> Result<Json<Vec<UserOut>>, ApiError> {
-    require_admin(&user)?;
+/// M2.18：列出所有用户放开为「任意登录用户」——
+/// 非管理员需要在权限管理弹窗里选择要授权的用户/团队。
+pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<UserOut>>, ApiError> {
     let users = Users::list(state.db.pool()).await?;
     Ok(Json(users.iter().map(to_out).collect()))
 }

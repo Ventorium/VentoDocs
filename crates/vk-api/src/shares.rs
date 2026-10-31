@@ -13,14 +13,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vk_core::error::DomainError;
 use vk_core::model::{EntryKind, FileMeta, Share};
-use vk_core::perm::Perm;
 use vk_store::repo::audit::Audit;
 use vk_store::repo::directories::Directories;
 use vk_store::repo::files::Files;
-use vk_store::repo::grants::Grants;
+use vk_store::repo::settings::SystemSettings;
 use vk_store::repo::shares::Shares;
 use vk_store::repo::users::{hash_password, verify_password};
 
+use crate::settings::SHARE_KEY;
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::error::ApiError;
@@ -57,6 +57,9 @@ pub struct CreateShareReq {
     /// 仅预览（禁止下载）；缺省 false
     #[serde(default)]
     pub preview_only: bool,
+    /// 链接范围：`internal` 内网 / `external` 外网（需系统启用外网域名）；缺省 internal
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// 对外分享视图：剔除 `password_hash`（哈希绝不外发），补充 `has_password` 供前端展示。
@@ -73,6 +76,8 @@ pub struct SharePublic {
     pub access_count: i32,
     pub preview_only: bool,
     pub revoked: bool,
+    /// `internal` | `external`（M2.24）
+    pub scope: String,
     pub created_by: Option<Uuid>,
     pub created_at: chrono::DateTime<Utc>,
 }
@@ -91,6 +96,7 @@ impl From<&Share> for SharePublic {
             access_count: s.access_count,
             preview_only: s.preview_only,
             revoked: s.revoked,
+            scope: s.scope.clone(),
             created_by: s.created_by,
             created_at: s.created_at,
         }
@@ -104,26 +110,38 @@ pub struct ShareOut {
     pub url: String,
 }
 
-/// 对分享目标校验 SHARE 权限位。
-async fn check_share_perm(
+/// 分享管理入口：仅资源创建者（M2.35：管理员不再有旁路，
+/// 分享创建/查看/撤销一律回归资源原有人；分享/发布不再作为可授权位）。
+/// `including_trash`：撤销场景下资源可能已在回收站，用含回收站变体查询。
+async fn require_resource_owner(
     pool: &sqlx::PgPool,
     user: &AuthUser,
     resource_type: &str,
     resource_id: Uuid,
+    including_trash: bool,
 ) -> Result<(), ApiError> {
-    let have = match resource_type {
+    match resource_type {
         "file" => {
-            Files::get_meta(pool, resource_id).await?;
-            Grants::resolve_for_file(pool, user.id, resource_id, user.is_admin).await?
+            let file = if including_trash {
+                Files::get_meta_including_trash(pool, resource_id).await?
+            } else {
+                Files::get_meta(pool, resource_id).await?
+            };
+            if file.created_by != Some(user.id) {
+                return Err(ApiError::forbidden("仅资源创建者可创建或管理分享"));
+            }
         }
         "directory" => {
-            Directories::get(pool, resource_id).await?;
-            Grants::resolve(pool, user.id, resource_id, user.is_admin).await?
+            let dir = if including_trash {
+                Directories::get_including_trash(pool, resource_id).await?
+            } else {
+                Directories::get(pool, resource_id).await?
+            };
+            if dir.created_by != Some(user.id) {
+                return Err(ApiError::forbidden("仅资源创建者可创建或管理分享"));
+            }
         }
         _ => return Err(ApiError::bad_request("resource_type 仅支持 file 或 directory")),
-    };
-    if !have.contains(Perm::SHARE) {
-        return Err(ApiError::forbidden("无权限分享该资源"));
     }
     Ok(())
 }
@@ -135,7 +153,7 @@ pub async fn create(
     Json(body): Json<CreateShareReq>,
 ) -> Result<(StatusCode, Json<ShareOut>), ApiError> {
     let pool = state.db.pool();
-    check_share_perm(pool, &user, &body.resource_type, body.resource_id).await?;
+    require_resource_owner(pool, &user, &body.resource_type, body.resource_id, false).await?;
 
     let password = body
         .password
@@ -163,6 +181,24 @@ pub async fn create(
         return Err(ApiError::bad_request("下载次数上限需 ≥ 1，留空表示不限"));
     }
 
+    // M2.24：链接范围（internal / external）。external 需系统已启用外网域名。
+    let scope = match body.scope.as_deref().map(str::trim) {
+        None | Some("internal") => "internal".to_string(),
+        Some("external") => {
+            let enabled = SystemSettings::get(pool, SHARE_KEY)
+                .await
+                .and_then(|v| v.get("external_enabled").and_then(|b| b.as_bool()))
+                .unwrap_or(false);
+            if !enabled {
+                return Err(ApiError::bad_request(
+                    "外网分享未启用，请先在 设置 → 分享 中配置外网域名",
+                ));
+            }
+            "external".to_string()
+        }
+        Some(other) => return Err(ApiError::bad_request(format!("scope 无效：{other}"))),
+    };
+
     let share = Shares::create(
         pool,
         &body.resource_type,
@@ -171,6 +207,7 @@ pub async fn create(
         expires_at,
         body.max_downloads,
         body.preview_only,
+        &scope,
         user.id,
     )
     .await?;
@@ -187,6 +224,7 @@ pub async fn create(
             "max_downloads": body.max_downloads,
             "preview_only": body.preview_only,
             "has_password": password.is_some(),
+            "scope": scope,
         }),
         None,
     )
@@ -218,7 +256,7 @@ pub async fn list(
     Query(q): Query<ListSharesQuery>,
 ) -> Result<Json<ShareListOut>, ApiError> {
     let pool = state.db.pool();
-    check_share_perm(pool, &user, &q.resource_type, q.resource_id).await?;
+    require_resource_owner(pool, &user, &q.resource_type, q.resource_id, false).await?;
     let shares = Shares::list_for_resource(pool, &q.resource_type, q.resource_id).await?;
     let shares = shares.iter().map(SharePublic::from).collect();
     Ok(Json(ShareListOut { shares }))
@@ -233,20 +271,7 @@ pub async fn revoke(
     let pool = state.db.pool();
     let share = Shares::get(pool, id).await?;
     // 资源可能已在回收站（目录 get 会 404），用 including_trash 变体做权限校验
-    let have = match share.resource_type.as_str() {
-        "file" => {
-            Files::get_meta(pool, share.resource_id).await?;
-            Grants::resolve_for_file(pool, user.id, share.resource_id, user.is_admin).await?
-        }
-        "directory" => {
-            Directories::get_including_trash(pool, share.resource_id).await?;
-            Grants::resolve(pool, user.id, share.resource_id, user.is_admin).await?
-        }
-        _ => return Err(ApiError::not_found("分享资源类型无效")),
-    };
-    if !have.contains(Perm::SHARE) {
-        return Err(ApiError::forbidden("无权限管理该分享"));
-    }
+    require_resource_owner(pool, &user, &share.resource_type, share.resource_id, true).await?;
     Shares::revoke(pool, id).await?;
     Audit::log(
         pool,

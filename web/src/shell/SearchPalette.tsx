@@ -74,6 +74,8 @@ export default function SearchPalette({ open, onClose, onOpenFile }: Props) {
 
   const openHit = (hit: SearchHit) => {
     onOpenFile(hit.id)
+    // M2.29：命中后收起面板（此前点击/Enter 打开文件后搜索面板仍留在屏幕中央）
+    onClose()
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {

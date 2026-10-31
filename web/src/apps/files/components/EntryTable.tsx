@@ -299,6 +299,15 @@ const EntryTable = ({ page, me, onReload, onOpenFile, onOpenDir, canCreateDir, c
       {modal?.type === 'grants' && (
         <GrantsModal open dirId={modal.dir.id} dirName={modal.dir.name} onClose={close} />
       )}
+      {modal?.type === 'file-grants' && (
+        <GrantsModal
+          open
+          dirId={modal.dir.id}
+          dirName={modal.dir.name}
+          file={{ id: modal.file.id, name: modal.file.name }}
+          onClose={close}
+        />
+      )}
       {modal?.type === 'share' && (
         <ShareModal
           open

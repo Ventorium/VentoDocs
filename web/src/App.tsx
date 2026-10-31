@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, useLocation, useNavigate, useRoutes } from 'react-router'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
+import { useWindows } from '@/kernel/window/store'
 import { setExpiredHandler } from '@/store/token'
 import { ToastHost } from '@/components/ui/toast'
 import { Spin } from '@/components/ui/kit'
@@ -53,6 +54,15 @@ const _App = () => {
       useSettings.getState().loadFromBackend().catch(() => {})
     }
   }, [ready, logged])
+
+  // M2.19：桌面状态按登录用户隔离——用户切换（登录/登出/换号）时同步绑定，
+  // 订阅在 set 时同步触发，保证 DesktopShell 首帧渲染前窗口列表已就绪
+  useEffect(() => {
+    const apply = (uid: string | null) => useWindows.getState().bindUser(uid)
+    apply(useAuth.getState().user?.id ?? null)
+    const unsub = useAuth.subscribe((s) => apply(s.user?.id ?? null))
+    return unsub
+  }, [])
 
   return <AppRoutes />
 }

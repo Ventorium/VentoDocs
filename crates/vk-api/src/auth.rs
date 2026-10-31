@@ -58,6 +58,36 @@ pub fn sign_token(secret: &str, user: &User, ttl_hours: u64) -> Result<String, A
     .map_err(|e| ApiError::internal(format!("JWT 签发失败：{e}")))
 }
 
+/// M2.26：签发站点 token（sub=publish:{publish_id}，role=site），用于发布站点密码门。
+/// 与系统账号 token 同源（同一 jwt_secret），但 sub 前缀不同，parse_token 会拒绝它。
+pub fn sign_site_token(secret: &str, publish_id: &str, ttl_hours: u64) -> Result<String, ApiError> {
+    let now = Utc::now().timestamp();
+    let claims = Claims {
+        sub: format!("publish:{publish_id}"),
+        role: "site".to_string(),
+        iat: now,
+        exp: now + (ttl_hours * 3600) as i64,
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| ApiError::internal(format!("站点令牌签发失败：{e}")))
+}
+
+/// M2.26：校验站点 token —— 签名有效且 sub 精确等于 publish:{publish_id}（防跨站点复用）。
+pub fn verify_site_token(secret: &str, token: &str, publish_id: &str) -> bool {
+    let Ok(data) = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::new(jsonwebtoken::Algorithm::HS256),
+    ) else {
+        return false;
+    };
+    data.claims.sub == format!("publish:{publish_id}")
+}
+
 pub fn parse_token(secret: &str, token: &str) -> Result<(Uuid, Role), ApiError> {
     let data = decode::<Claims>(
         token,

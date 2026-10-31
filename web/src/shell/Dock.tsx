@@ -33,7 +33,7 @@ function DockIcon({
   icon: React.ReactNode
   isRunning: boolean
   appId: string | null
-  onClick: () => void
+  onClick: (e: React.MouseEvent) => void
   onContextMenu?: (e: React.MouseEvent) => void
   mouseX: ReturnType<typeof useMotionValue<number>>
 }) {
@@ -96,6 +96,7 @@ export default function Dock({ onLaunch, onLaunchpad }: Props) {
   const windows = useWindows((s) => s.windows)
   const isAdmin = useAuth((s) => s.user?.role === 'admin')
   const showCtx = useContextMenu((s) => s.show)
+  const showCtxAbove = useContextMenu((s) => s.showAbove)
   const mouseX = useMotionValue(Number.POSITIVE_INFINITY)
   const apps = APPS.filter((a) => a.launchable && (!a.adminOnly || isAdmin))
 
@@ -110,7 +111,7 @@ export default function Dock({ onLaunch, onLaunchpad }: Props) {
             <Grid3X3 size={22} />
           </span>
         }
-        onClick={onLaunchpad}
+        onClick={() => onLaunchpad()}
         mouseX={mouseX}
       />
       <div className="vd-dock-sep" />
@@ -121,7 +122,21 @@ export default function Dock({ onLaunch, onLaunchpad }: Props) {
           items.push({ key: 'open', label: `打开 ${a.name}`, onClick: () => onLaunch(a.id) })
         } else {
           runs.forEach((w) =>
-            items.push({ key: w.id, label: w.title, onClick: () => onLaunch(a.id, w.appState) }),
+            items.push({
+              key: w.id,
+              label: w.title,
+              // M2.20：多实例应用（文件管理器）右键选中 = 聚焦/恢复该窗口，而非新建
+              onClick: () => {
+                const st = useWindows.getState()
+                if (a.multiInstance) {
+                  const cur = st.windows.find((x) => x.id === w.id)
+                  if (cur?.minimized) st.restore(w.id)
+                  st.focus(w.id)
+                } else {
+                  onLaunch(a.id, w.appState)
+                }
+              },
+            }),
           )
           items.push({ key: 'sep', divider: true })
           items.push({
@@ -143,7 +158,33 @@ export default function Dock({ onLaunch, onLaunchpad }: Props) {
             appId={a.id}
             isRunning={runs.length > 0}
             icon={a.icon}
-            onClick={() => onLaunch(a.id)}
+            onClick={(e) => {
+              // M2.21：多实例应用且已有窗口 → 左键弹窗口选择菜单（聚焦/恢复具体窗口或新建）；
+              // 单实例或无窗口 → 保持原启动行为
+              if (!a.multiInstance || runs.length === 0) {
+                onLaunch(a.id)
+                return
+              }
+              const leftItems: CtxItem[] = []
+              runs.forEach((w) =>
+                leftItems.push({
+                  key: w.id,
+                  label: w.title,
+                  onClick: () => {
+                    const st = useWindows.getState()
+                    const cur = st.windows.find((x) => x.id === w.id)
+                    if (cur?.minimized) st.restore(w.id)
+                    st.focus(w.id)
+                  },
+                }),
+              )
+              leftItems.push({ key: 'sep', divider: true })
+              leftItems.push({ key: 'new-win', label: '新建窗口', onClick: () => onLaunch(a.id) })
+              // M2.22：flyout 锚定在图标上方（水平居中、底部箭头指向图标，对齐 Windows/mac 任务栏）；
+              // e.currentTarget 为图标按钮，其 getBoundingClientRect 含悬停放大的变换，定位更贴合视觉
+              const iconRect = e.currentTarget.getBoundingClientRect()
+              showCtxAbove(iconRect.left + iconRect.width / 2, iconRect.top, leftItems)
+            }}
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()

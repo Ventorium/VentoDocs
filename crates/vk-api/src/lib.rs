@@ -13,6 +13,7 @@ pub mod publishes;
 pub mod search;
 pub mod settings;
 pub mod shares;
+pub mod site;
 pub mod teams;
 pub mod users;
 
@@ -96,6 +97,8 @@ pub struct AppState {
     pub db: Db,
     pub objects: ObjectStore,
     pub cfg: Arc<Config>,
+    /// M2.24：实际绑定的分享端口（启动时确定；设置页改端口需重启后生效）。
+    pub share_port: u16,
 }
 
 /// 客户端 IP 中间件：解析 X-Forwarded-For（取首跳）→ X-Real-IP → TCP 对端地址，
@@ -161,6 +164,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/public/published/{publish_id}/files/{file_id}/download",
             get(publishes::public_download),
+        )
+        // M2.26：站点密码校验（login 策略；正确 → 24h 站点 token）
+        .route(
+            "/api/v1/public/published/{publish_id}/password",
+            post(publishes::public_verify_password),
         );
 
     let protected = Router::new()
@@ -185,6 +193,7 @@ pub fn router(state: AppState) -> Router {
             delete(teams::remove_member),
         )
         .route("/api/v1/directories/root", get(directories::root))
+        .route("/api/v1/directories/shared", get(directories::shared))
         .route("/api/v1/directories/{id}", get(directories::get))
         .route("/api/v1/directories", post(directories::create))
         .route("/api/v1/directories/{id}/rename", post(directories::rename))
@@ -226,6 +235,15 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/files/{id}/rename", post(files::rename))
         .route("/api/v1/files/{id}/move", post(files::move_file))
         .route("/api/v1/files/{id}/copy", post(files::copy_file))
+        // M2.23：文件级授权（覆盖所在目录的继承权限）
+        .route(
+            "/api/v1/files/{id}/grants",
+            get(files::list_file_grants).put(files::set_file_grant),
+        )
+        .route(
+            "/api/v1/files/{id}/grants/{ptype}/{pid}",
+            delete(files::remove_file_grant),
+        )
         // 分享管理（§10）
         .route("/api/v1/shares", get(shares::list).post(shares::create))
         .route("/api/v1/shares/{id}/revoke", post(shares::revoke))
@@ -240,6 +258,16 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/settings/desktop",
             get(settings::get_desktop).put(settings::put_desktop),
+        )
+        // M2.24: 系统设置（分享端口 / 外网域名）
+        .route(
+            "/api/v1/settings/system/share",
+            get(settings::get_share_settings).put(settings::put_share_settings),
+        )
+        // M2.27: 系统设置（发布域名，只读；域名仅来自环境变量 VIENTO_PUBLISH_DOMAIN）
+        .route(
+            "/api/v1/settings/system/publish",
+            get(settings::get_publish_settings),
         )
         .route("/api/v1/audits", get(audits::list))
         .route("/api/v1/notifications", get(notifications::list))
@@ -262,9 +290,10 @@ async fn health() -> &'static str {
 }
 
 /// 前端运行时环境信息（web 的 fetchConfig 消费；生产由单二进制直接服务）。
+/// M2.26：publishDomain 返回有效域名（系统设置优先，回退环境变量）。
 async fn env_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "publishDomain": state.cfg.publish_domain,
+        "publishDomain": publishes::effective_publish_domain(&state),
         // 编辑器以 base:'./' 相对引用构建，文档 URL 必须带尾斜杠，
         // 相对资源（./sdkjs/...）才能解析到 /document/ 之下
         "editorBase": if state.cfg.editor_available { Some("/document/") } else { None },

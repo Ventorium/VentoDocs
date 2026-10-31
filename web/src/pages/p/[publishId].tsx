@@ -1,27 +1,26 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Globe, Lock, TriangleAlert, User } from 'lucide-react'
+import { Globe, Lock, TriangleAlert } from 'lucide-react'
 import { useRequest } from 'ahooks'
-import { client } from '@/api'
-import { getPublicPublishEntries, getPublicPublishMeta } from '@/api/public'
+import { getPublicPublishEntries, getPublicPublishMeta, verifyPublicPublishPassword } from '@/api/public'
+import { PublicApiError } from '@/api/public'
 import PublicBrowse from '@/components/public/PublicBrowse'
 import { Btn, Tag } from '@/components/ui/kit'
 
 /** 发布站点公开页：/p/{publishId}。 */
 const PublishPublicPage = () => {
   const publishId = (window.location.pathname.split('/').filter(Boolean).pop() ?? '') as string
-  // 登录态（仅内存保存，关闭页面即失效）
-  const [bearerToken, setBearerToken] = useState<string | null>(null)
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [logging, setLogging] = useState(false)
-  const [loginError, setLoginError] = useState<string | null>(null)
+  // M2.26：站点 token（仅内存保存，关闭页面即失效）；login 策略 = 站点密码门
+  const [siteToken, setSiteToken] = useState<string | null>(null)
+  const [sitePassword, setSitePassword] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [gateError, setGateError] = useState<string | null>(null)
 
   const {
     data: meta,
     loading: metaLoading,
     error: metaError,
-  } = useRequest(() => getPublicPublishMeta(publishId, bearerToken ?? undefined), {
-    refreshDeps: [bearerToken],
+  } = useRequest(() => getPublicPublishMeta(publishId, siteToken ?? undefined), {
+    refreshDeps: [siteToken],
   })
 
   const centerWrap = (children: ReactNode) => (
@@ -58,31 +57,25 @@ const PublishPublicPage = () => {
     </div>
   )
 
-  const doLogin = async (e?: FormEvent) => {
+  const doPassword = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (!username.trim() || !password) {
-      setLoginError('请输入账号和密码')
+    if (!sitePassword) {
+      setGateError('请输入站点密码')
       return
     }
-    setLogging(true)
-    setLoginError(null)
+    setSubmitting(true)
+    setGateError(null)
     try {
-      const { error, data } = await client.post('/api/v1/auth/login', {
-        body: { username: username.trim(), password },
-      })
-      if (error || !data) {
-        setLoginError('登录失败，请检查账号和密码')
-        return
-      }
-      setBearerToken(data.token)
-    } catch {
-      setLoginError('登录失败，请检查账号和密码')
+      const data = await verifyPublicPublishPassword(publishId, sitePassword)
+      setSiteToken(data.token)
+    } catch (err) {
+      setGateError(err instanceof PublicApiError ? err.message : '密码校验失败，请重试')
     } finally {
-      setLogging(false)
+      setSubmitting(false)
     }
   }
 
-  const renderLogin = () => (
+  const renderPasswordGate = (hint?: string) => (
     <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div
         className="vd-panel"
@@ -91,37 +84,27 @@ const PublishPublicPage = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Lock size={16} style={{ color: 'var(--vd-accent)' }} />
-            <span style={{ fontSize: 16, fontWeight: 600 }}>该站点需要登录</span>
+            <span style={{ fontSize: 16, fontWeight: 600 }}>该站点需要访问密码</span>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--vd-text-secondary)' }}>使用 VentoDocs 账号登录后查看内容</div>
-          <div style={{ position: 'relative' }}>
-            <User size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--vd-text-tertiary)' }} />
-            <input
-              className="vd-input"
-              placeholder="请输入账号"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void doLogin()}
-              style={{ width: '100%', paddingLeft: 32 }}
-              autoFocus
-            />
-          </div>
+          <div style={{ fontSize: 13, color: 'var(--vd-text-secondary)' }}>请输入站点密码以查看内容（无需系统账号）</div>
           <div style={{ position: 'relative' }}>
             <Lock size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--vd-text-tertiary)' }} />
             <input
               className="vd-input"
               type="password"
-              placeholder="请输入密码"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void doLogin()}
+              placeholder="请输入站点密码"
+              value={sitePassword}
+              onChange={(e) => setSitePassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void doPassword()}
               style={{ width: '100%', paddingLeft: 32 }}
               autoComplete="current-password"
+              autoFocus
             />
           </div>
-          {loginError ? <div style={{ fontSize: 12, color: 'var(--vd-accent-danger)' }}>{loginError}</div> : null}
-          <Btn variant="primary" loading={logging} onClick={() => void doLogin()} style={{ width: '100%' }}>
-            登录
+          {gateError ? <div style={{ fontSize: 12, color: 'var(--vd-accent-danger)' }}>{gateError}</div> : null}
+          {hint && !gateError ? <div style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>{hint}</div> : null}
+          <Btn variant="primary" loading={submitting} onClick={() => void doPassword()} style={{ width: '100%' }}>
+            进入站点
           </Btn>
         </div>
       </div>
@@ -130,15 +113,15 @@ const PublishPublicPage = () => {
 
   if (metaError) {
     const e = metaError as { status?: number; code?: string; message?: string }
-    if (e.status === 401) return renderLogin()
+    if (e.status === 401) return renderPasswordGate(e.message)
     if (e.status === 410) return centerWrap(renderTerminal('站点已下线', e.message || '该发布站点已停用或目录已删除'))
     return centerWrap(renderTerminal('站点不存在', e.message))
   }
 
   if (!meta) return null
 
-  // 需要登录且尚未登录：展示登录表单
-  if (meta.policy === 'login' && !bearerToken) return renderLogin()
+  // 需密码且尚未通过密码门：展示站点密码输入
+  if (meta.policy === 'login' && !siteToken) return renderPasswordGate()
 
   const canDownload = meta.policy !== 'preview_only'
 
@@ -150,18 +133,19 @@ const PublishPublicPage = () => {
           <span style={{ fontSize: 16, fontWeight: 600 }}>{meta.name}</span>
           <Tag>公开站点</Tag>
           {meta.policy === 'preview_only' && <Tag>仅预览</Tag>}
-          {bearerToken && (
-            <Btn variant="ghost" size="xs" onClick={() => setBearerToken(null)} style={{ marginLeft: 'auto' }}>
-              退出登录
+          {meta.policy === 'login' && <Tag>需密码</Tag>}
+          {siteToken && (
+            <Btn variant="ghost" size="xs" onClick={() => { setSiteToken(null); setSitePassword('') }} style={{ marginLeft: 'auto' }}>
+              退出
             </Btn>
           )}
         </div>
         <PublicBrowse
           rootName={meta.name}
           rootId={meta.directoryId}
-          source={{ kind: 'publish', publishId, bearerToken: bearerToken ?? undefined }}
+          source={{ kind: 'publish', publishId, bearerToken: siteToken ?? undefined }}
           canDownload={canDownload}
-          getEntries={(dirId) => getPublicPublishEntries(publishId, dirId, bearerToken ?? undefined)}
+          getEntries={(dirId) => getPublicPublishEntries(publishId, dirId, siteToken ?? undefined)}
         />
       </div>
     </div>

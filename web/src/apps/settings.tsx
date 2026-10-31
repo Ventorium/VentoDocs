@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Check, CloudUpload, RotateCcw, Save, Search } from 'lucide-react'
 import { client } from '@/api'
-import type { LdapConfigUpdate } from '@/api/schema'
+import type { LdapConfigUpdate, PublishSystemSettings, ShareSystemSettings } from '@/api/schema'
 import { WALLPAPERS } from '@/lib/wallpapers'
 import { useAuth } from '@/store/useAuth'
 import { useSettings, type ThemeMode } from '@/store/useSettings'
-import { Btn, Seg, Spin, Switch, Tag } from '@/components/ui/kit'
+import { Btn, Input, Seg, Spin, Switch, Tag } from '@/components/ui/kit'
 import { msg } from '@/components/ui/toast'
 
 type LdapConfigInfo = {
@@ -162,6 +162,143 @@ const Field = ({ label, children, error }: { label: string; children: ReactNode;
     {error ? <span style={{ fontSize: 12, color: 'var(--vd-accent-danger)' }}>{error}</span> : null}
   </div>
 )
+
+/** 分享（管理员）：分享链接独立端口 + 外网域名（M2.24）。 */
+const ShareSection = () => {
+  const [cfg, setCfg] = useState<ShareSystemSettings | null>(null)
+  const [form, setForm] = useState<{ port: string; external_enabled: boolean; external_domain: string }>({
+    port: '8090',
+    external_enabled: false,
+    external_domain: '',
+  })
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data } = await client.get('/api/v1/settings/system/share')
+      if (data && !cancelled) {
+        setCfg(data)
+        setForm({
+          port: String(data.port),
+          external_enabled: data.external_enabled,
+          external_domain: data.external_domain,
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const doSave = async () => {
+    const port = Number(form.port)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      msg.error('分享端口需为 1–65535 的整数')
+      return
+    }
+    if (form.external_enabled && !form.external_domain.trim()) {
+      msg.error('启用外网域名时，外网域名不能为空')
+      return
+    }
+    setSaving(true)
+    const { error } = await client.put('/api/v1/settings/system/share', {
+      body: {
+        port,
+        external_enabled: form.external_enabled,
+        external_domain: form.external_domain.trim(),
+      },
+    })
+    setSaving(false)
+    if (error) return
+    setCfg({ port, external_enabled: form.external_enabled, external_domain: form.external_domain.trim(), active_port: cfg?.active_port })
+    msg.success('分享设置已保存，端口修改需重启服务后生效')
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Panel title="分享链接">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Field label="分享端口">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                value={form.port}
+                onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
+                style={{ width: 160 }}
+              />
+              <span className="vd-faint" style={{ fontSize: 12 }}>
+                分享链接经独立端口访问（当前生效 {cfg ? (cfg.active_port ?? cfg.port) : '8090'}）；端口修改需重启服务后生效
+              </span>
+            </div>
+          </Field>
+          <Field label="外网域名">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Switch
+                checked={form.external_enabled}
+                onChange={(v) => setForm((f) => ({ ...f, external_enabled: v }))}
+              />
+              <Input
+                placeholder="如 docs.example.com，可带 https://"
+                value={form.external_domain}
+                onChange={(e) => setForm((f) => ({ ...f, external_domain: e.target.value }))}
+                disabled={!form.external_enabled}
+                style={{ flex: 1, maxWidth: 420 }}
+              />
+            </div>
+          </Field>
+          <p className="m-0" style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
+            启用外网域名后，创建分享时可选「内网 / 外网」链接；外网链接使用该域名（未写协议头时默认 https）。
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Btn variant="primary" loading={saving} onClick={() => void doSave()}>
+              <Save size={14} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+              保存分享设置
+            </Btn>
+          </div>
+        </div>
+      </Panel>
+      <PublishDomainSection />
+    </div>
+  )
+}
+
+/** M2.27：网站发布域名（分享设置子面板，只读）：域名仅由服务器环境变量 VIENTO_PUBLISH_DOMAIN（.env）配置，本页面只展示与提示。 */
+const PublishDomainSection = () => {
+  const [cfg, setCfg] = useState<PublishSystemSettings | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data } = await client.get('/api/v1/settings/system/publish')
+      if (data && !cancelled) setCfg(data)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const eff = cfg?.effective_domain
+  return (
+    <Panel title="网站发布">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Field label="发布域名（只读）">
+          <span style={{ fontSize: 13, fontFamily: 'monospace' }}>
+            {eff ?? '未配置（发布功能不可用）'}
+          </span>
+        </Field>
+        <p className="m-0" style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
+          发布后站点地址为 https://{'{站点标识}'}.{eff || '域名'}/（泛子域名）。发布前请先在 DNS 服务商处添加泛解析：*{eff ? `.${eff}` : '.域名'}（A 记录）指向服务器 IP，否则站点无法解析访问。
+        </p>
+        <p className="m-0" style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
+          发布域名仅通过服务器 .env 文件中的环境变量 VIENTO_PUBLISH_DOMAIN 配置，修改后需重启服务生效，不在本页面填写。
+        </p>
+      </div>
+    </Panel>
+  )
+}
 
 /** 账户与安全（管理员）：LDAP 在线配置。 */
 const LdapSection = () => {
@@ -533,11 +670,16 @@ const AboutSection = () => (
 const SettingsPage = () => {
   const role = useAuth((s) => s.computed.role)
   const isAdmin = role === 'admin'
-  const [section, setSection] = useState<'appearance' | 'security' | 'about'>('appearance')
+  const [section, setSection] = useState<'appearance' | 'share' | 'security' | 'about'>('appearance')
 
-  const items: { key: 'appearance' | 'security' | 'about'; label: string }[] = [
+  const items: { key: 'appearance' | 'share' | 'security' | 'about'; label: string }[] = [
     { key: 'appearance', label: '外观设置' },
-    ...(isAdmin ? [{ key: 'security' as const, label: '账户与安全' }] : []),
+    ...(isAdmin
+      ? [
+          { key: 'share' as const, label: '分享' },
+          { key: 'security' as const, label: '账户与安全' },
+        ]
+      : []),
     { key: 'about', label: '关于' },
   ]
 
@@ -566,6 +708,7 @@ const SettingsPage = () => {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         {section === 'appearance' ? <AppearanceSection /> : null}
+        {section === 'share' && isAdmin ? <ShareSection /> : null}
         {section === 'security' && isAdmin ? <LdapSection /> : null}
         {section === 'about' ? <AboutSection /> : null}
       </div>

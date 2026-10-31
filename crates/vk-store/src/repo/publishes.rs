@@ -7,7 +7,8 @@ use uuid::Uuid;
 use vk_core::ids::gen_publish_id;
 use vk_core::model::{Directory, PublishedDir};
 
-const PUB_SELECT: &str = "id, directory_id, publish_id, enabled, policy, created_by, created_at, updated_at";
+const PUB_SELECT: &str =
+    "id, directory_id, publish_id, enabled, policy, password_hash, site_mode, created_by, created_at, updated_at";
 
 #[derive(FromRow)]
 struct PubRow {
@@ -16,6 +17,9 @@ struct PubRow {
     publish_id: String,
     enabled: bool,
     policy: String,
+    password_hash: Option<String>,
+    /// M2.28：站点模式 static | spa | file_index。
+    site_mode: String,
     created_by: Option<Uuid>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -28,6 +32,9 @@ fn to_pub(r: PubRow) -> PublishedDir {
         publish_id: r.publish_id.clone(),
         enabled: r.enabled,
         policy: r.policy.clone(),
+        password_hash: r.password_hash.clone(),
+        has_password: r.password_hash.is_some(),
+        site_mode: r.site_mode,
         created_by: r.created_by,
         created_at: r.created_at,
         updated_at: r.updated_at,
@@ -41,6 +48,8 @@ struct PubDirRow {
     publish_id: String,
     enabled: bool,
     policy: String,
+    password_hash: Option<String>,
+    site_mode: String,
     created_by: Option<Uuid>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -73,7 +82,7 @@ impl Publishes {
     /// 按 publish_id 查发布记录 + 目录（目录含回收站，供 410 / 越界判定）。
     pub async fn get_by_publish_id(pool: &PgPool, publish_id: &str) -> Result<Option<PublishWithDir>> {
         let r: Option<PubDirRow> = sqlx::query_as(
-            "SELECT p.id, p.directory_id, p.publish_id, p.enabled, p.policy, p.created_by, p.created_at, p.updated_at,
+            "SELECT p.id, p.directory_id, p.publish_id, p.enabled, p.policy, p.password_hash, p.site_mode, p.created_by, p.created_at, p.updated_at,
                     d.name AS dir_name, d.path AS dir_path, d.is_trash AS dir_is_trash, d.deleted_at AS dir_deleted_at
                FROM published_dirs p
                JOIN directories d ON d.id = p.directory_id
@@ -102,6 +111,8 @@ impl Publishes {
             publish_id: r.publish_id,
             enabled: r.enabled,
             policy: r.policy,
+            password_hash: r.password_hash,
+            site_mode: r.site_mode,
             created_by: r.created_by,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -110,25 +121,33 @@ impl Publishes {
     }
 
     /// 开启/更新发布：无记录则创建并生成 publish_id，否则复用同一 ID 并启用。
+    /// M2.26：password_hash 为站点密码哈希（None = 清除/未设置）。
+    /// M2.28：site_mode = static | spa | file_index（默认 static）。
     pub async fn upsert_enable(
         pool: &PgPool,
         directory_id: Uuid,
         policy: &str,
+        password_hash: Option<&str>,
+        site_mode: &str,
         created_by: Uuid,
     ) -> Result<PublishedDir> {
         let r: PubRow = sqlx::query_as(
-            "INSERT INTO published_dirs (id, directory_id, publish_id, enabled, policy, created_by)
-             VALUES ($1, $2, $3, true, $4, $5)
+            "INSERT INTO published_dirs (id, directory_id, publish_id, enabled, policy, password_hash, site_mode, created_by)
+             VALUES ($1, $2, $3, true, $4, $5, $6, $7)
              ON CONFLICT (directory_id) DO UPDATE SET
                 enabled = true,
                 policy = EXCLUDED.policy,
+                password_hash = EXCLUDED.password_hash,
+                site_mode = EXCLUDED.site_mode,
                 updated_at = now()
-             RETURNING id, directory_id, publish_id, enabled, policy, created_by, created_at, updated_at",
+             RETURNING id, directory_id, publish_id, enabled, policy, password_hash, site_mode, created_by, created_at, updated_at",
         )
         .bind(Uuid::now_v7())
         .bind(directory_id)
         .bind(gen_publish_id())
         .bind(policy)
+        .bind(password_hash)
+        .bind(site_mode)
         .bind(created_by)
         .fetch_one(pool)
         .await?;

@@ -66,7 +66,8 @@ const FileDetailPage = ({ fileId, onTitleChange }: Props) => {
             updated_at: entry.modified ?? ''
           },
           lock: null,
-          my_perms: 0
+          my_perms: 0,
+          granted_perms: 0
         }
       }
       const {
@@ -92,7 +93,8 @@ const FileDetailPage = ({ fileId, onTitleChange }: Props) => {
   useEffect(() => {
     if (file?.name) onTitleChange?.(file.name)
   }, [file?.name])
-  const perms = data?.my_perms ?? 0
+  // M2.36：UI 显隐按授权权限位（不含管理员旁路；后端对创建者恒返回 1023）
+  const perms = data?.granted_perms ?? 0
   const isLockOwner = !!lock && lock.locked_by === me.id
 
   const ext = file?.name.includes('.') ? ((file.name.split('.').pop() ?? '').toLowerCase() as string) : ''

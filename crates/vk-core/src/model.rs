@@ -140,6 +140,8 @@ pub struct Share {
     pub access_count: i32,
     pub preview_only: bool,
     pub revoked: bool,
+    /// "internal" | "external"（M2.24：内网 / 外网链接范围）
+    pub scope: String,
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
@@ -153,7 +155,21 @@ pub struct PublishedDir {
     pub enabled: bool,
     /// "anon" | "login" | "preview_only"
     pub policy: String,
+    /// M2.26：站点访问密码 argon2 哈希（login 策略专用；不出前端）。
+    #[serde(skip, default)]
+    pub password_hash: Option<String>,
+    /// M2.26：是否已设置站点密码（前端展示用，不暴露哈希）。
+    #[serde(default)]
+    pub has_password: bool,
+    /// M2.28：站点模式 static（纯静态）| spa（try_files）| file_index（文件列表），默认 static。
+    #[serde(default = "default_site_mode")]
+    pub site_mode: String,
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// M2.28：站点模式默认值（纯静态）。
+pub fn default_site_mode() -> String {
+    "static".into()
 }
