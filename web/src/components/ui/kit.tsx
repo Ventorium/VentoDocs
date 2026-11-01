@@ -3,6 +3,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
 
 /* ---------- 按钮 ---------- */
 
@@ -250,12 +251,19 @@ export function Dropdown({
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const btnRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const toggle = () => {
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect()
       const left = align === 'right' ? Math.max(4, r.right - width) : r.left
-      setPos({ top: r.bottom + 6, left })
+      // 空间不足时向上翻，避免菜单被视口底部截断
+      const estHeight = items.length * 30 + 16
+      const top =
+        r.bottom + 6 + estHeight > window.innerHeight
+          ? Math.max(4, r.top - estHeight - 6)
+          : r.bottom + 6
+      setPos({ top, left })
     }
     setOpen((v) => !v)
   }
@@ -263,8 +271,8 @@ export function Dropdown({
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (btnRef.current && !btnRef.current.contains(e.target as Node) && !pos) setOpen(false)
-      if (btnRef.current && btnRef.current.contains(e.target as Node)) return
+      const t = e.target as Node
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return
       setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
@@ -287,8 +295,15 @@ export function Dropdown({
       <span onClick={toggle} style={{ display: 'inline-flex', cursor: 'pointer' }}>
         {button ?? <span className="vd-tb-btn" style={{ width: 'auto' }}>{label ?? '⋮'}</span>}
       </span>
-      {open && pos ? (
-        <div className="vd-tb-menu" style={{ top: pos.top, left: pos.left, minWidth: width }}>
+      {open && pos
+        ? createPortal(
+            // 挂到 body：桌面窗口带 backdrop-filter，会成为 fixed 子元素的包含块，
+            // 直接在窗口内渲染会被窗口右/下边界裁切（用户管理表格行内的「...」菜单）
+            <div
+              ref={menuRef}
+              className="vd-tb-menu"
+              style={{ top: pos.top, left: pos.left, minWidth: width }}
+            >
           {items.map((it, i) =>
             'divider' in it ? (
               <div key={i} className="vd-tb-menu-div" />
@@ -304,8 +319,10 @@ export function Dropdown({
               </button>
             ),
           )}
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRequest } from 'ahooks'
 import { RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import dayjs from 'dayjs'
@@ -36,6 +36,7 @@ const TrashPage = () => {
   const [confirm, setConfirm] = useState<ConfirmPurge | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
   const { show } = useContextMenu()
+  const wrapRef = useRef<HTMLDivElement>(null)
 
   const {
     data: items,
@@ -188,6 +189,62 @@ const TrashPage = () => {
   const batchRestore = () => void restoreTargets((items ?? []).filter((it) => selectedIds.includes(it.id)))
   const batchPurge = () => purgeTargets((items ?? []).filter((it) => selectedIds.includes(it.id)))
 
+  // ── 键盘：Ctrl/Cmd+A 全选 / ↑↓ 选择移动 / Shift+↑↓ 连选 / Delete 彻底删除 / Esc 取消 ──
+
+  // 挂载聚焦表格容器（与文件管理器多列导航一致，窗口打开后键盘即生效）。
+  useEffect(() => {
+    wrapRef.current?.focus()
+  }, [])
+
+  const onTableKey = (e: React.KeyboardEvent) => {
+    // 模态打开时（恢复改名框 / 彻底删除确认框）不响应列表快捷键，避免二次触发
+    if (confirm || renameTarget) return
+    const list = items ?? []
+    if (list.length === 0) return
+    const modKey = e.metaKey || e.ctrlKey
+    if (modKey && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault()
+      setSelectedIds(list.map((it) => it.id))
+      setAnchorId(null)
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const cur = anchorId ? list.findIndex((it) => it.id === anchorId) : -1
+      if (e.shiftKey) {
+        // Shift+↑↓：从锚点连选（无锚点时忽略）
+        if (cur < 0) return
+        const nextIdx = e.key === 'ArrowDown' ? Math.min(cur + 1, list.length - 1) : Math.max(cur - 1, 0)
+        const [lo, hi] = cur <= nextIdx ? [cur, nextIdx] : [nextIdx, cur]
+        setSelectedIds(list.slice(lo, hi + 1).map((it) => it.id))
+        return
+      }
+      const nextIdx =
+        cur < 0
+          ? e.key === 'ArrowDown' ? 0 : list.length - 1
+          : e.key === 'ArrowDown' ? Math.min(cur + 1, list.length - 1) : Math.max(cur - 1, 0)
+      const it = list[nextIdx]
+      setSelectedIds([it.id])
+      setAnchorId(it.id)
+      return
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      if (selectedIds.length === 0) return
+      const targets = list.filter((it) => selectedIds.includes(it.id))
+      if (targets.every((t) => t.kind === 'dir')) {
+        msg.error('彻底删除仅支持文件，暂不支持目录')
+        return
+      }
+      purgeTargets(targets)
+      return
+    }
+    if (e.key === 'Escape') {
+      setSelectedIds([])
+      setAnchorId(null)
+    }
+  }
+
   const runConfirm = async () => {
     if (!confirm) return
     setConfirmBusy(true)
@@ -201,7 +258,7 @@ const TrashPage = () => {
       <div style={{ fontSize: 16, fontWeight: 600 }}>回收站</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ flex: 1, fontSize: 13, color: 'var(--vd-text-tertiary)' }}>
-          点击选中，Cmd/Ctrl+单击 多选，Shift+单击 连选；右键或顶部按钮恢复 / 彻底删除（仅文件）。
+          点击选中，Cmd/Ctrl+单击 多选，Shift+单击 连选；快捷键：Ctrl/Cmd+A 全选、↑↓ 移动选择、Shift+↑↓ 连选、Delete 彻底删除（仅文件）、Esc 取消选择；右键或顶部按钮恢复 / 彻底删除（仅文件）。
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Btn size="sm" disabled={selectedIds.length === 0} onClick={() => void batchRestore()}>
@@ -216,7 +273,10 @@ const TrashPage = () => {
       </div>
 
       <div
+        ref={wrapRef}
         className="vd-table-wrap"
+        tabIndex={-1}
+        onKeyDown={onTableKey}
         onClick={(e) => {
           // 点表格空白处取消选中
           if (!(e.target instanceof Element) || !e.target.closest('tr')) {

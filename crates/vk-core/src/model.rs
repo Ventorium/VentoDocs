@@ -27,6 +27,13 @@ pub struct User {
     pub auth_provider: AuthProvider,
     pub role: Role,
     pub disabled: bool,
+    /// 凭证版本号（M2.41）：签发 JWT 时写入 claims.ver，认证时比对；
+    /// 改密/禁用/删除/登出自增即可吊销该用户所有未过期 token。不对外序列化。
+    #[serde(default, skip_serializing)]
+    pub token_version: i32,
+    /// 个人存储配额（字节）。`None` = 不限制（默认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_bytes: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,7 +119,9 @@ pub struct FileEntry {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum EntryKind {
     /// 命名字段使 serde 序列化为 `{"kind":"directory","directory":{...}}`（与前端 Entry 类型一致）。
-    Directory { directory: Directory },
+    Directory {
+        directory: Directory,
+    },
     File(FileEntry),
 }
 

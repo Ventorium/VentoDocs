@@ -206,9 +206,10 @@ fn pct_rfc5987(s: &str) -> String {
 }
 
 fn content_disposition(name: &str, download: bool) -> String {
+    // 头值安全：剔除控制字符（含 CR/LF，防头注入 / 非法头值导致 500）、引号与反斜杠。
     let ascii_fallback: String = name
         .chars()
-        .filter(|c| c.is_ascii() && *c != '"' && *c != '\\')
+        .filter(|c| c.is_ascii() && !c.is_ascii_control() && *c != '"' && *c != '\\')
         .collect();
     let enc = pct_rfc5987(name);
     if download {
@@ -280,6 +281,58 @@ pub struct FileGrantsOut {
 }
 
 /// 主体显示名（用户显示名 / 团队名），解析失败回退 uuid 字符串。
+/// 配额校验（M2.43）：`incoming` 为本次将新增的字节数，`replacing` 为被替换掉的字节数
+/// （同一文件新增版本时用旧的当前大小）。返回**剩余可用字节**（`None` = 不限）。
+///
+/// 占用口径：该用户名下未删除文件的当前版本大小之和（回收站/历史版本不计）。
+/// 并发上传之间不是强一致（无锁），属于尽力而为的配额。
+async fn remaining_quota(
+    state: &AppState,
+    owner: Uuid,
+    replacing: u64,
+) -> Result<Option<u64>, ApiError> {
+    let pool = state.db.pool();
+    let user = Users::get_by_id(pool, owner).await?;
+    let Some(quota) = user.quota_bytes else {
+        return Ok(None);
+    };
+    let used = Users::usage_bytes(pool, owner)
+        .await?
+        .saturating_sub(replacing as i64);
+    if used >= quota {
+        return Err(ApiError::quota_exceeded(quota, used));
+    }
+    Ok(Some((quota - used) as u64))
+}
+
+/// 组配额错误（带当前配额与已用字节）。
+async fn quota_error(state: &AppState, owner: Uuid) -> ApiError {
+    let pool = state.db.pool();
+    match Users::get_by_id(pool, owner).await {
+        Ok(u) => {
+            let quota = u.quota_bytes.unwrap_or_default();
+            let used = Users::usage_bytes(pool, owner).await.unwrap_or(quota);
+            ApiError::quota_exceeded(quota, used)
+        }
+        Err(_) => ApiError::quota_exceeded(0, 0),
+    }
+}
+
+/// 已知大小的写入（复制 / 版本回滚）直接判定：超出即拒绝。
+async fn ensure_quota(
+    state: &AppState,
+    owner: Uuid,
+    incoming: u64,
+    replacing: u64,
+) -> Result<(), ApiError> {
+    if let Some(remaining) = remaining_quota(state, owner, replacing).await?
+        && incoming > remaining
+    {
+        return Err(quota_error(state, owner).await);
+    }
+    Ok(())
+}
+
 async fn principal_name(pool: &sqlx::PgPool, principal_type: &str, principal_id: Uuid) -> String {
     if principal_type == "user" {
         Users::get_by_id(pool, principal_id)
@@ -327,17 +380,15 @@ pub async fn list_file_grants(
     let file_out: Vec<FileGrantOut> = file_grants
         .iter()
         .zip(file_names)
-        .map(
-            |(g, name)| FileGrantOut {
-                id: g.id,
-                file_id: g.file_id,
-                principal_type: g.principal_type.clone(),
-                principal_id: g.principal_id,
-                principal_name: name,
-                perms: g.perms,
-                created_at: g.created_at,
-            },
-        )
+        .map(|(g, name)| FileGrantOut {
+            id: g.id,
+            file_id: g.file_id,
+            principal_type: g.principal_type.clone(),
+            principal_id: g.principal_id,
+            principal_name: name,
+            perms: g.perms,
+            created_at: g.created_at,
+        })
         .collect();
     let inh_names = inherited
         .iter()
@@ -349,17 +400,15 @@ pub async fn list_file_grants(
     let inh_out: Vec<GrantOut> = inherited
         .iter()
         .zip(inh_names)
-        .map(
-            |(g, name)| GrantOut {
-                id: g.id,
-                directory_id: g.directory_id,
-                principal_type: g.principal_type.clone(),
-                principal_id: g.principal_id,
-                principal_name: name,
-                perms: g.perms,
-                created_at: g.created_at,
-            },
-        )
+        .map(|(g, name)| GrantOut {
+            id: g.id,
+            directory_id: g.directory_id,
+            principal_type: g.principal_type.clone(),
+            principal_id: g.principal_id,
+            principal_name: name,
+            perms: g.perms,
+            created_at: g.created_at,
+        })
         .collect();
     Ok(Json(FileGrantsOut {
         file_grants: file_out,
@@ -403,7 +452,9 @@ pub async fn set_file_grant(
         None,
     )
     .await?;
-    Ok(Json(serde_json::json!({ "ok": true, "perms": perms.bits() })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "perms": perms.bits() }),
+    ))
 }
 
 /// 文件授权管理：移除某主体在文件上的授权（该主体在此文件上恢复目录继承权限）。
@@ -454,20 +505,28 @@ pub async fn upload(
         .unwrap_or("未命名文件")
         .to_string();
 
+    // 配额：把单次读入上限夹紧到剩余额度，超出即在中途中止（不落库）
+    let remaining = remaining_quota(&state, user.id, 0).await?;
+    let cap = match remaining {
+        Some(r) => r.min(state.cfg.max_upload_bytes),
+        None => state.cfg.max_upload_bytes,
+    };
     let stream = field;
     let reader = StreamReader::new(stream);
-    let obj = state
-        .objects
-        .ingest(reader, state.cfg.max_upload_bytes)
-        .await
-        .map_err(|e| {
+    let obj = match state.objects.ingest(reader, cap).await {
+        Ok(o) => o,
+        Err(e) => {
             let msg = e.to_string();
-            if msg.contains("超过上限") {
-                ApiError::upload_too_large()
-            } else {
-                ApiError::internal(format!("文件写入失败：{msg}"))
+            if !msg.contains("超过上限") {
+                return Err(ApiError::internal(format!("文件写入失败：{msg}")));
             }
-        })?;
+            return Err(if cap < state.cfg.max_upload_bytes {
+                quota_error(&state, user.id).await
+            } else {
+                ApiError::upload_too_large()
+            });
+        }
+    };
 
     let meta = Files::create(
         pool,
@@ -573,6 +632,8 @@ pub async fn content(
             content_disposition(&file.name, download),
         )
         .header(header::CONTENT_LENGTH, len.to_string())
+        // 鉴权后内容不进共享缓存：权限被收回/条目进回收站后，代理缓存仍能命中会造成越权读取
+        .header(header::CACHE_CONTROL, "private, no-store")
         .body(Body::from_stream(stream))
         .map_err(|e| ApiError::internal(format!("构造响应失败：{e}")))?;
     Ok(response)
@@ -618,6 +679,13 @@ pub async fn save(
     require_file_perm(pool, &user, id, Perm::MODIFY_RENAME).await?;
     let file = Files::get_meta(pool, id).await?;
     lock_precheck(pool, &user, id).await?;
+    // 配额按文件所有者计：新版本会替换当前版本，旧大小先抵扣
+    let owner = file.created_by.unwrap_or(user.id);
+    let remaining = remaining_quota(&state, owner, file.size).await?;
+    let cap = match remaining {
+        Some(r) => r.min(state.cfg.max_upload_bytes),
+        None => state.cfg.max_upload_bytes,
+    };
 
     let mut base_version: u32 = file.current_version;
     let mut note: Option<String> = None;
@@ -634,20 +702,21 @@ pub async fn save(
                     return Err(ApiError::bad_request("file 字段重复"));
                 }
                 let reader = StreamReader::new(field);
-                obj = Some(
-                    state
-                        .objects
-                        .ingest(reader, state.cfg.max_upload_bytes)
-                        .await
-                        .map_err(|e| {
-                            let msg = e.to_string();
-                            if msg.contains("超过上限") {
-                                ApiError::upload_too_large()
-                            } else {
-                                ApiError::internal(format!("文件写入失败：{msg}"))
-                            }
-                        })?,
-                );
+                let got = match state.objects.ingest(reader, cap).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if !msg.contains("超过上限") {
+                            return Err(ApiError::internal(format!("文件写入失败：{msg}")));
+                        }
+                        return Err(if cap < state.cfg.max_upload_bytes {
+                            quota_error(&state, owner).await
+                        } else {
+                            ApiError::upload_too_large()
+                        });
+                    }
+                };
+                obj = Some(got);
             }
             "base_version" => {
                 let text = field
@@ -719,6 +788,10 @@ pub async fn restore_version(
     let pool = state.db.pool();
     require_file_perm(pool, &user, id, Perm::MODIFY_RENAME).await?;
     lock_precheck(pool, &user, id).await?;
+    let cur = Files::get_meta(pool, id).await?;
+    let target_size = Files::version_size(pool, id, version).await?;
+    let owner = cur.created_by.unwrap_or(user.id);
+    ensure_quota(&state, owner, target_size as u64, cur.size as u64).await?;
     let meta = Files::restore_version(pool, id, version, user.id, None).await?;
     Ok(Json(meta))
 }
@@ -940,6 +1013,8 @@ pub async fn copy_file(
         return Err(ApiError::forbidden("无权限在目标目录放置文件"));
     }
     let src = Files::get_meta(pool, id).await?;
+    // 配额计入复制发起者（新文件的 created_by）
+    ensure_quota(&state, user.id, src.size as u64, 0).await?;
     let name = body.new_name.as_deref().unwrap_or(&src.name);
     let meta = Files::copy_to(pool, id, body.target_directory_id, name, user.id, None)
         .await
@@ -1046,34 +1121,35 @@ fn dos_datetime_to_iso(dt: zip::DateTime) -> String {
     )
 }
 
-/// 读取 zip 文件对象到内存（先校验大小上限）。
-async fn read_zip_object(state: &AppState, id: Uuid) -> Result<(FileMeta, Vec<u8>), ApiError> {
+/// zip 文件对象路径（先校验大小上限）。
+///
+/// 只返回磁盘路径、不把整包读进内存：旧实现 `Vec<u8>` 对 512MB 以内任意 zip
+/// 都会整包驻留内存，几个并发预览就能打爆内存；zip 解析只需 `Read + Seek`，
+/// 直接开文件即可（由 `spawn_blocking` 承担同步 IO）。
+async fn zip_object_path(
+    state: &AppState,
+    id: Uuid,
+) -> Result<(FileMeta, std::path::PathBuf), ApiError> {
     let file = Files::get_meta(state.db.pool(), id).await?;
     let (sha, _encoding) = Files::current_ref(state.db.pool(), id).await?;
-    let mut obj = state
-        .objects
-        .open(&sha)
+    let path = state.objects.path_for(&sha);
+    let meta = tokio::fs::metadata(&path)
         .await
         .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
-    let len = obj
-        .metadata()
-        .await
-        .map_err(|e| ApiError::internal(format!("读取文件元数据失败：{e}")))?
-        .len();
-    if len > ZIP_LIST_MAX_BYTES {
-        return Err(ApiError::bad_request("压缩包过大，暂不支持预览（超过 512MB）"));
+    if meta.len() > ZIP_LIST_MAX_BYTES {
+        return Err(ApiError::bad_request(
+            "压缩包过大，暂不支持预览（超过 512MB）",
+        ));
     }
-    let mut bytes = Vec::with_capacity(len as usize);
-    tokio::io::AsyncReadExt::read_to_end(&mut obj, &mut bytes)
-        .await
-        .map_err(|e| ApiError::internal(format!("读取压缩包失败：{e}")))?;
-    Ok((file, bytes))
+    Ok((file, path))
 }
 
 /// 解析 zip 中央目录，返回扁平条目列表（含隐含目录由前端根据路径分组）。
-async fn parse_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryOut>, ApiError> {
-    let parsed = tokio::task::spawn_blocking(move || -> Result<Vec<ZipEntryOut>, ApiError> {
-        let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(bytes))
+async fn parse_zip_entries(path: std::path::PathBuf) -> Result<Vec<ZipEntryOut>, ApiError> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<ZipEntryOut>, ApiError> {
+        let file = std::fs::File::open(&path)
+            .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+        let mut archive = zip::read::ZipArchive::new(file)
             .map_err(|_| ApiError::bad_request("不是有效的 zip 压缩包"))?;
         if archive.len() > ZIP_ENTRY_MAX_COUNT {
             return Err(ApiError::bad_request("压缩包内文件过多，暂不支持预览"));
@@ -1101,8 +1177,7 @@ async fn parse_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryOut>, ApiError>
         Ok(out)
     })
     .await
-    .map_err(|e| ApiError::internal(format!("解析压缩包任务失败：{e}")))?;
-    parsed
+    .map_err(|e| ApiError::internal(format!("解析压缩包任务失败：{e}")))?
 }
 
 /// zip 内条目内容查询参数。
@@ -1135,8 +1210,8 @@ pub async fn zip_list(
 ) -> Result<Json<ZipListOut>, ApiError> {
     let pool = state.db.pool();
     require_file_perm(pool, &user, id, Perm::READ_PREVIEW).await?;
-    let (file, bytes) = read_zip_object(&state, id).await?;
-    let entries = parse_zip_entries(bytes).await?;
+    let (file, path) = zip_object_path(&state, id).await?;
+    let entries = parse_zip_entries(path).await?;
     Ok(Json(ZipListOut {
         name: file.name,
         size: file.size,
@@ -1157,24 +1232,26 @@ pub async fn zip_entry(
     require_file_perm(pool, &user, id, Perm::READ_PREVIEW).await?;
     let entry_path = validate_zip_entry_path(&q.path)?;
     let entry_path_cmp = entry_path.clone();
-    let (_file, bytes) = read_zip_object(&state, id).await?;
+    let (_file, path) = zip_object_path(&state, id).await?;
     let data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ApiError> {
-        let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(bytes))
+        let file = std::fs::File::open(&path)
+            .map_err(|_| ApiError::not_found("文件对象不存在（存储损坏）"))?;
+        let mut archive = zip::read::ZipArchive::new(file)
             .map_err(|_| ApiError::not_found("不是有效的 zip 压缩包"))?;
         // 按归一化名匹配（兼容反斜杠/前导斜杠存储的旧归档），目录条目直接排除
         let mut target: Option<usize> = None;
         for i in 0..archive.len() {
-            if let Ok(f) = archive.by_index(i) {
-                if normalize_zip_name(f.name()) == entry_path_cmp {
-                    target = Some(i);
-                    break;
-                }
+            if let Ok(f) = archive.by_index(i)
+                && normalize_zip_name(f.name()) == entry_path_cmp
+            {
+                target = Some(i);
+                break;
             }
         }
         let Some(idx) = target else {
             return Err(ApiError::not_found("压缩包内不存在该文件"));
         };
-        let mut f = archive
+        let f = archive
             .by_index(idx)
             .map_err(|e| ApiError::internal(format!("读取压缩包条目失败：{e}")))?;
         if f.is_dir() {
@@ -1184,17 +1261,32 @@ pub async fn zip_entry(
             return Err(ApiError::bad_request("加密压缩包暂不支持预览"));
         }
         if f.size() > ZIP_ENTRY_MAX_BYTES {
-            return Err(ApiError::bad_request("压缩包内文件过大，暂不支持预览（超过 128MB）"));
+            return Err(ApiError::bad_request(
+                "压缩包内文件过大，暂不支持预览（超过 128MB）",
+            ));
         }
-        let mut buf = Vec::with_capacity(f.size() as usize);
-        std::io::Read::read_to_end(&mut f, &mut buf)
+        // 解压炸弹防护：声明大小可伪造（local header 可小于实际解压流），
+        // 因此按实际读取字节数硬截断，而不是只信 `f.size()`。
+        // 预分配也按上限夹紧，避免伪造 128MB 声明撑爆内存。
+        let cap = ZIP_ENTRY_MAX_BYTES.min(f.size());
+        let mut buf = Vec::with_capacity(cap as usize);
+        let mut limited = std::io::Read::take(f, ZIP_ENTRY_MAX_BYTES + 1);
+        std::io::Read::read_to_end(&mut limited, &mut buf)
             .map_err(|e| ApiError::internal(format!("解压压缩包内文件失败：{e}")))?;
+        if buf.len() as u64 > ZIP_ENTRY_MAX_BYTES {
+            return Err(ApiError::bad_request(
+                "压缩包内文件过大，暂不支持预览（超过 128MB）",
+            ));
+        }
         Ok(buf)
     })
     .await
-    .map_err(|e| ApiError::internal(format!("解析压缩包任务失败：{e}")))?
-    ?;
-    let entry_name = entry_path.rsplit('/').next().unwrap_or(&entry_path).to_string();
+    .map_err(|e| ApiError::internal(format!("解析压缩包任务失败：{e}")))??;
+    let entry_name = entry_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&entry_path)
+        .to_string();
     let response = Response::builder()
         .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(
@@ -1202,6 +1294,7 @@ pub async fn zip_entry(
             content_disposition(&entry_name, false),
         )
         .header(header::CONTENT_LENGTH, data.len().to_string())
+        .header(header::CACHE_CONTROL, "private, no-store")
         .body(Body::from(data))
         .map_err(|e| ApiError::internal(format!("构造响应失败：{e}")))?;
     Ok(response)

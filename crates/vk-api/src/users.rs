@@ -41,9 +41,13 @@ pub struct UserOut {
     pub disabled: bool,
     pub auth_provider: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 个人存储配额（字节）；`None` = 不限制（M2.43）。
+    pub quota_bytes: Option<i64>,
+    /// 当前占用：名下未删除文件的当前版本大小之和。
+    pub used_bytes: i64,
 }
 
-fn to_out(u: &User) -> UserOut {
+fn to_out(u: &User, used_bytes: i64) -> UserOut {
     UserOut {
         id: u.id,
         username: u.username.clone(),
@@ -55,14 +59,23 @@ fn to_out(u: &User) -> UserOut {
             vk_core::model::AuthProvider::Ldap => "ldap".into(),
         },
         created_at: u.created_at,
+        quota_bytes: u.quota_bytes,
+        used_bytes,
     }
 }
 
 /// M2.18：列出所有用户放开为「任意登录用户」——
 /// 非管理员需要在权限管理弹窗里选择要授权的用户/团队。
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<UserOut>>, ApiError> {
-    let users = Users::list(state.db.pool()).await?;
-    Ok(Json(users.iter().map(to_out).collect()))
+    let pool = state.db.pool();
+    let users = Users::list(pool).await?;
+    let usage = Users::usage_by_creator(pool).await?;
+    Ok(Json(
+        users
+            .iter()
+            .map(|u| to_out(u, usage.get(&u.id).copied().unwrap_or(0)))
+            .collect(),
+    ))
 }
 
 pub async fn get(
@@ -72,7 +85,8 @@ pub async fn get(
 ) -> Result<Json<UserOut>, ApiError> {
     require_admin(&user)?;
     let u = Users::get_by_id(state.db.pool(), id).await?;
-    Ok(Json(to_out(&u)))
+    let used = Users::usage_bytes(state.db.pool(), id).await?;
+    Ok(Json(to_out(&u, used)))
 }
 
 pub async fn create(
@@ -116,7 +130,8 @@ pub async fn create(
         None,
     )
     .await?;
-    Ok(Json(to_out(&u)))
+    let used = Users::usage_bytes(state.db.pool(), u.id).await?;
+    Ok(Json(to_out(&u, used)))
 }
 
 #[derive(Deserialize)]
@@ -140,6 +155,13 @@ pub async fn update(
     if body.disabled == Some(true) && id == user.id {
         return Err(ApiError::bad_request("不能禁用自己"));
     }
+    // 目标当前是管理员且本次将被禁用/降级 → 必须还有别的活跃管理员
+    let target = Users::get_by_id(pool, id).await?;
+    let losing_admin = target.role == Role::Admin
+        && (body.disabled == Some(true) || body.role == Some(Role::User));
+    if losing_admin && Users::active_admin_count(pool).await? <= 1 {
+        return Err(ApiError::bad_request("系统至少需保留一个启用状态的管理员"));
+    }
     if let Some(name) = &body.display_name {
         Users::update_display_name(pool, id, name).await?;
     }
@@ -161,8 +183,84 @@ pub async fn update(
         None,
     )
     .await?;
-    Ok(Json(to_out(&u)))
+    let used = Users::usage_bytes(pool, u.id).await?;
+    Ok(Json(to_out(&u, used)))
 }
+
+/// 删除用户（M2.41，管理员）：仅管理员；不能删自己；不能删掉最后一个启用管理员。
+/// 关联清理见 `vk_store::repo::users::Users::delete` 的注释（授权/锁/分享/发布，
+/// 名下内容转交执行删除的管理员）。
+pub async fn delete(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&user)?;
+    if id == user.id {
+        return Err(ApiError::bad_request("不能删除自己"));
+    }
+    let pool = state.db.pool();
+    let target = Users::get_by_id(pool, id).await?;
+    if target.role == Role::Admin && Users::active_admin_count(pool).await? <= 1 {
+        return Err(ApiError::bad_request("系统至少需保留一个启用状态的管理员"));
+    }
+    Users::delete(pool, id, user.id).await?;
+    Audit::log(
+        pool,
+        Some(user.id),
+        "admin",
+        "user_delete",
+        Some("user"),
+        Some(&id.to_string()),
+        serde_json::json!({ "username": target.username }),
+        None,
+    )
+    .await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "username": target.username }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct SetQuotaReq {
+    /// 目标配额（字节）；`null` = 不限制，`0` = 禁止继续占用。
+    #[serde(default)]
+    pub quota_bytes: Option<i64>,
+}
+
+/// 设置个人存储配额（M2.43，管理员）。`null` 表示不限制。
+pub async fn set_quota(
+    State(state): State<AppState>,
+    axum::extract::Extension(user): axum::extract::Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SetQuotaReq>,
+) -> Result<Json<UserOut>, ApiError> {
+    require_admin(&user)?;
+    if let Some(q) = body.quota_bytes
+        && !(0..=MAX_QUOTA_BYTES).contains(&q)
+    {
+        return Err(ApiError::bad_request("配额需在 0 到 10 PiB 之间"));
+    }
+    let pool = state.db.pool();
+    Users::set_quota(pool, id, body.quota_bytes).await?;
+    Audit::log(
+        pool,
+        Some(user.id),
+        "admin",
+        "user_quota",
+        Some("user"),
+        Some(&id.to_string()),
+        serde_json::json!({ "quota_bytes": body.quota_bytes }),
+        None,
+    )
+    .await?;
+    let u = Users::get_by_id(pool, id).await?;
+    let used = Users::usage_bytes(pool, id).await?;
+    Ok(Json(to_out(&u, used)))
+}
+
+/// 配额上限：10 PiB（防误填天文数字）。
+const MAX_QUOTA_BYTES: i64 = 10 * 1024 * 1024 * 1024 * 1024 * 1024;
 
 #[derive(Deserialize)]
 pub struct SetPasswordReq {
@@ -214,7 +312,10 @@ async fn ldap_config_response(state: &AppState) -> Result<serde_json::Value, Api
             if let Some(obj) = info.as_object_mut() {
                 obj.insert("source".to_string(), serde_json::json!(source));
                 obj.insert("passwordSet".to_string(), serde_json::json!(password_set));
-                obj.insert("bindDnSet".to_string(), serde_json::json!(!cfg.bind_dn.is_empty()));
+                obj.insert(
+                    "bindDnSet".to_string(),
+                    serde_json::json!(!cfg.bind_dn.is_empty()),
+                );
             }
             Ok(info)
         }
@@ -299,10 +400,7 @@ pub async fn save_ldap_config(
         .is_some_and(|p| !p.trim().is_empty());
     let password_hex = if password_changed {
         let plain = body.bind_password.as_deref().unwrap().trim();
-        Some(
-            vk_store::repo::ldap::encrypt_secret(&key, plain)
-                .map_err(ApiError::bad_request)?,
-        )
+        Some(vk_store::repo::ldap::encrypt_secret(&key, plain).map_err(ApiError::bad_request)?)
     } else {
         // 留空 = 沿用已有密码：库中值优先，无库行时回退环境变量（与测试端一致）。
         current.and_then(|r| r.bind_password).or_else(|| {
@@ -444,8 +542,16 @@ pub async fn test_ldap(
                     .unwrap_or(defaults.attr_username)
                     .trim()
                     .to_string(),
-                attr_name: req.attr_name.unwrap_or(defaults.attr_name).trim().to_string(),
-                attr_email: req.attr_email.unwrap_or(defaults.attr_email).trim().to_string(),
+                attr_name: req
+                    .attr_name
+                    .unwrap_or(defaults.attr_name)
+                    .trim()
+                    .to_string(),
+                attr_email: req
+                    .attr_email
+                    .unwrap_or(defaults.attr_email)
+                    .trim()
+                    .to_string(),
             }
         }
         None => {
@@ -478,7 +584,9 @@ pub async fn test_ldap(
                 None,
             )
             .await?;
-            Ok(Json(serde_json::json!({ "ok": true, "entries": n, "sample": sample })))
+            Ok(Json(
+                serde_json::json!({ "ok": true, "entries": n, "sample": sample }),
+            ))
         }
         Err(err) => {
             // 测试失败不中断请求，仅记录（error 可能很长，截断）

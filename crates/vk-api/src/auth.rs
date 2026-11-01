@@ -33,6 +33,10 @@ struct Claims {
     role: String,
     iat: i64,
     exp: i64,
+    /// 凭证版本号（M2.41）：与 `users.token_version` 不一致即视为已吊销。
+    /// 老 token 无此字段 → 默认 0，与迁移后的初始值一致，升级不打断在线会话。
+    #[serde(default)]
+    ver: i64,
 }
 
 fn role_str(role: &Role) -> &'static str {
@@ -49,6 +53,7 @@ pub fn sign_token(secret: &str, user: &User, ttl_hours: u64) -> Result<String, A
         role: role_str(&user.role).to_string(),
         iat: now,
         exp: now + (ttl_hours * 3600) as i64,
+        ver: user.token_version as i64,
     };
     encode(
         &Header::default(),
@@ -64,6 +69,7 @@ pub fn sign_site_token(secret: &str, publish_id: &str, ttl_hours: u64) -> Result
     let now = Utc::now().timestamp();
     let claims = Claims {
         sub: format!("publish:{publish_id}"),
+        ver: 0,
         role: "site".to_string(),
         iat: now,
         exp: now + (ttl_hours * 3600) as i64,
@@ -88,7 +94,8 @@ pub fn verify_site_token(secret: &str, token: &str, publish_id: &str) -> bool {
     data.claims.sub == format!("publish:{publish_id}")
 }
 
-pub fn parse_token(secret: &str, token: &str) -> Result<(Uuid, Role), ApiError> {
+/// 解析系统账号 token → `(用户 id, 角色, 凭证版本号)`。
+pub fn parse_token(secret: &str, token: &str) -> Result<(Uuid, Role, i64), ApiError> {
     let data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
@@ -101,7 +108,7 @@ pub fn parse_token(secret: &str, token: &str) -> Result<(Uuid, Role), ApiError> 
     } else {
         Role::User
     };
-    Ok((id, role))
+    Ok((id, role, data.claims.ver))
 }
 
 /// 认证中间件：校验 Bearer JWT 与账号状态，注入 AuthUser。
@@ -116,7 +123,7 @@ pub async fn auth_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(ApiError::unauthorized)?;
-    let (id, _role) = parse_token(&state.cfg.jwt_secret, token)?;
+    let (id, _role, ver) = parse_token(&state.cfg.jwt_secret, token)?;
     let user = Users::get_by_id(state.db.pool(), id)
         .await
         .map_err(|e| match e {
@@ -125,6 +132,10 @@ pub async fn auth_middleware(
         })?;
     if user.disabled {
         return Err(ApiError::forbidden("账号已被禁用"));
+    }
+    // 凭证版本不一致 = 改密/禁用/登出后已吊销：旧 token 立即失效
+    if ver != user.token_version as i64 {
+        return Err(ApiError::unauthorized_with("登录状态已失效，请重新登录"));
     }
     let auth = AuthUser {
         id: user.id,
@@ -145,12 +156,23 @@ pub struct BootstrapReq {
     pub password: String,
 }
 
+/// bootstrap 并发互斥用的 advisory lock key（任意常量，进程无关）。
+const BOOTSTRAP_LOCK: i64 = 0x0076_656e_746f;
+
 /// 首次初始化：仅当系统无用户时可创建首个管理员。
 pub async fn bootstrap(
     State(state): State<AppState>,
     Json(body): Json<BootstrapReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let pool = state.db.pool();
+    // 并发竞态防护：两个同时到达的 bootstrap 都可能读到 count=0 而各自建管理员。
+    // 用事务级 advisory lock 串行化「检查 → 建号」窗口（锁随事务/提前返回自动释放）。
+    let mut tx = pool.begin().await.map_err(StoreError::Sqlx)?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(BOOTSTRAP_LOCK)
+        .execute(&mut *tx)
+        .await
+        .map_err(StoreError::Sqlx)?;
     let count = Users::count(pool).await?;
     if count > 0 {
         return Err(ApiError::forbidden("系统已完成初始化，bootstrap 不可用"));
@@ -182,6 +204,8 @@ pub async fn bootstrap(
         None,
     )
     .await?;
+    // 建号成功后才提交（提前返回时事务回滚、锁自动释放）
+    tx.commit().await.map_err(StoreError::Sqlx)?;
     let token = sign_token(&state.cfg.jwt_secret, &user, state.cfg.jwt_ttl_hours)?;
     Ok(Json(serde_json::json!({
         "token": token,
@@ -228,9 +252,44 @@ pub async fn login(
     })))
 }
 
-/// 当前用户信息。
-pub async fn me(
+/// 登出（M2.41）：自增 token_version，使该用户**所有**已签发 token 立即失效。
+/// 说明：本系统无服务端会话表，故登出是"该账号全端下线"，而非仅当前设备。
+pub async fn logout(
+    State(state): State<AppState>,
     axum::extract::Extension(auth): axum::extract::Extension<AuthUser>,
-) -> Json<AuthUser> {
-    Json(auth)
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Users::bump_token_version(state.db.pool(), auth.id).await?;
+    Audit::log(
+        state.db.pool(),
+        Some(auth.id),
+        "auth",
+        "logout",
+        Some("user"),
+        Some(&auth.id.to_string()),
+        serde_json::json!({}),
+        None,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// 当前用户信息。
+/// 当前用户信息 + 个人配额（M2.43）。配额字段供前端做上传前预检；
+/// 真正的准入仍以写接口的服务端校验为准。
+pub async fn me(
+    State(state): State<AppState>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthUser>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pool = state.db.pool();
+    let user = Users::get_by_id(pool, auth.id).await?;
+    let used = Users::usage_bytes(pool, auth.id).await?;
+    Ok(Json(serde_json::json!({
+        "id": auth.id,
+        "username": auth.username,
+        "display_name": auth.display_name,
+        "role": auth.role,
+        "is_admin": auth.is_admin,
+        "quota_bytes": user.quota_bytes,
+        "used_bytes": used,
+    })))
 }

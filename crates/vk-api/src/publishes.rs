@@ -85,10 +85,10 @@ pub async fn enable(
         return Err(ApiError::bad_request("policy 仅支持 anon | login | preview_only"));
     }
     let site_mode_req = body.site_mode.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    if let Some(m) = site_mode_req {
-        if !VALID_SITE_MODES.contains(&m) {
-            return Err(ApiError::bad_request("site_mode 仅支持 static | spa | file_index"));
-        }
+    if let Some(m) = site_mode_req
+        && !VALID_SITE_MODES.contains(&m)
+    {
+        return Err(ApiError::bad_request("site_mode 仅支持 static | spa | file_index"));
     }
     let pool = state.db.pool();
     let dir = Directories::get(pool, id).await?;

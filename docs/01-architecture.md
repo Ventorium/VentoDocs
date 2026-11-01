@@ -433,7 +433,10 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 - 本地用户：email/用户名 + 密码（argon2id），登录签发 JWT（HS256，TTL 默认 24h，`VIENTO_JWT_TTL_HOURS`）；Bearer 头。
 - 管理员：`role='admin'`（两级：超管 + 普通用户，§15.1 定案；"管理员"即超管，负责用户管理与授权）。首个用户经引导流程创建（无用户时 `/api/bootstrap` 可用，创建后永久关闭）。
 - LDAP（§3.2）：管理员触发"从 LDAP 导入"（`POST /api/v1/admin/ldap/import`，admin 专用，**无请求体**）——ldap3 直连，连接参数（host/port/base_dn/绑定账号/用户过滤器/字段映射）一律走 `VIENTO_LDAP_*` 环境变量（§16），不入库、不入请求体。导入用户名/姓名/邮箱到 `users(auth_provider='ldap')`，角色固定 `user`、**无隐式授权**；**LDAP 用户初始不可本地登录**（系统不存其密码），需管理员设本地密码或后续接入 LDAP 绑定登录（二期）。返回 `{created, skipped, failed}`：已存在同 username → 计入 `skipped` 并 `COALESCE` 同步 name/email；单条失败不影响整批，失败条目记入 `failed: ["{username}: {err}"]`。LDAP 删除不联动删除本地用户；LDAP 用户本地密码修改只改本地，不回写 LDAP。
-- 限流：登录接口按 IP+账号限流（Redis 计数）。
+- 凭证吊销（M2.41）：`users.token_version` 写入 JWT `claims.ver`，认证时与库中值比对；改密 / 禁用 / 删除 / 主动登出（`POST /api/v1/auth/logout`）都会自增，令该用户**已签发但未过期**的全部 token 立即失效（无需服务端黑名单，水平扩展天然一致）。老 token 无 `ver` 字段按 0 处理，升级不打断在线会话。
+- 限流（M2.40）：登录 / 分享密码校验 / 发布密码 / 站点密码门按「IP+端点」统计失败次数，10 次失败 / 5 分钟 → 429 + `Retry-After`（进程内计数，单实例粒度；成功一次即清零）。
+- 个人存储配额（M2.43）：`users.quota_bytes`（NULL = 不限制，默认）。占用 = 该用户名下**未删除**文件的当前版本大小之和（回收站/历史版本不计，删除即释放）。写入接口（上传 / 保存新版本 / 复制 / 版本回滚）在准入时校验，超限返回 `413 QUOTA_EXCEEDED`（details 带 `quota_bytes`/`used_bytes`）；保存新版本与回滚按「替换后的总占用」计算。`/auth/me` 与 `GET /users` 暴露配额与占用，供前端预检与管理员查看。配额是尽力而为：并发写入不是强一致。
+- 用户删除（M2.41）：管理员可删除用户；同一事务内撤销其分享、停用其发布、清理其授权与文件锁，并把名下目录/文件/版本转交执行删除的管理员（否则 `created_by` 外键 NO ACTION 会阻止删除）。禁止删除自己，且系统至少保留一个启用状态的管理员。
 
 ## 16. 配置（环境变量）
 
@@ -444,9 +447,12 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 | `VIENTO_REDIS_URL` | 空=禁用（v1 未启用 Redis，v2 会话/队列预留） | Redis 连接串 |
 | `VIENTO_JWT_SECRET` | 必填 | JWT 密钥 |
 | `VIENTO_MAX_UPLOAD_MB` | 500 | 单文件上传上限 |
-| `VIENTO_TRASH_RETENTION_DAYS` | 180 | 回收站保留 |
-| `VIENTO_VERSION_KEEP` | 20 | 每文件保留版本数（超出最旧清理，对象按引用计数） |
-| `VIENTO_AUDIT_RETENTION_DAYS` | 365 | 审计保留 |
+| `VIENTO_TRASH_RETENTION_DAYS` | 180 | 回收站保留（后台任务按 `deleted_at` 清理） |
+| `VIENTO_VERSION_KEEP` | 20 | 每文件保留版本数（后台任务裁剪最旧版本） |
+| `VIENTO_AUDIT_RETENTION_DAYS` | 365 | 审计保留（后台任务清理） |
+| `VIENTO_JANITOR_INTERVAL_MINUTES` | 360 | 后台维护间隔（0=关闭）；启动即跑一轮 |
+| `VIENTO_CORS_ORIGINS` | 空=不放开 | 跨域来源白名单（逗号分隔） |
+| `VIENTO_TRUST_PROXY` | false | 是否信任 `X-Forwarded-For`/`X-Real-IP`（挂可信反代才开） |
 | `VIENTO_PUBLISH_DOMAIN` | 空=禁用发布 | 发布泛域名后缀 |
 | `VIENTO_LDAP_HOST` | 空=禁用 LDAP 导入 | LDAP 服务器地址（§15） |
 | `VIENTO_LDAP_PORT` | `389` | LDAP 端口（`636` 自动 LDAPS） |

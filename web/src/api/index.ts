@@ -12,6 +12,11 @@ const SILENT_403_PROBE = /\/(grants|shares|publish)(\/|$|\?)/
 export const client = createFetchClient<OpenAPIs>({
   requestTimeoutMs: 10000,
   requestInterceptor(request) {
+    // o2t 客户端把方法名原样下发（`patch` 小写）。Fetch 只对部分方法做归一化，
+    // PATCH 会被当作非标准方法发出去，axum 直接 405 —— 这里统一转大写。
+    if (typeof request.init?.method === 'string') {
+      request.init.method = request.init.method.toUpperCase()
+    }
     const token = getAccessToken()
     if (!PUBLIC_PATHS.includes(request.url) && token) {
       request.init.headers.Authorization = `Bearer ${token}`

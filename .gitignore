@@ -1,6 +1,6 @@
 # Rust
 target/
-Cargo.lock
+# 二进制应用固定依赖版本：Cargo.lock 纳入版本库（可复现构建 / 供应链可审计）
 
 # 前端
 web/node_modules/

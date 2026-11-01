@@ -49,9 +49,12 @@ docker build -t vento:latest .
 | `VIENTO_JWT_TTL_HOURS` | `24` | 登录态时长（小时） |
 | `VIENTO_DATA_DIR` | `data` | 文件对象存储根目录（`{root}/objects/…`） |
 | `VIENTO_MAX_UPLOAD_MB` | `500` | 单文件上传上限（MB） |
-| `VIENTO_TRASH_RETENTION_DAYS` | `180` | 回收站保留天数（保留参数，v1 无自动清理任务） |
-| `VIENTO_VERSION_KEEP` | `20` | 每文件保留版本上限（保留参数，v1 无自动清理任务） |
-| `VIENTO_AUDIT_RETENTION_DAYS` | `365` | 审计日志保留天数（保留参数，v1 无自动清理任务） |
+| `VIENTO_TRASH_RETENTION_DAYS` | `180` | 回收站保留天数（后台任务按此清理） |
+| `VIENTO_VERSION_KEEP` | `20` | 每文件保留版本上限（后台任务裁剪最旧版本） |
+| `VIENTO_AUDIT_RETENTION_DAYS` | `365` | 审计日志保留天数（后台任务清理） |
+| `VIENTO_JANITOR_INTERVAL_MINUTES` | `360` | 后台维护间隔；`0` = 关闭（需自行运维磁盘） |
+| `VIENTO_CORS_ORIGINS` | 空 | 跨域来源白名单（逗号分隔）；空 = 仅同源 |
+| `VIENTO_TRUST_PROXY` | `false` | 信任 `X-Forwarded-For`/`X-Real-IP`；仅在可信反代后设为 true |
 | `VIENTO_PUBLISH_DOMAIN` | 空 = 禁用 | 目录网站发布泛域名后缀，如 `publish.example.com`（需泛域名 + 泛证书，见 §6） |
 | `VENTO_EDITOR_DIST` | `editor-dist`（相对 CWD） | 在线编辑器静态资源目录；目录缺失 `index.html` 时编辑功能自动降级 |
 | `VIENTO_LDAP_HOST` | 空 = 禁用 | LDAP 目录导入（§15/16/17），配合下方变量 |
@@ -157,7 +160,9 @@ docker compose -f compose.prod.yml up -d
 
 - **PostgreSQL**：`pg_dump -Fc vento > vento-$(date +%F).dump`（含目录结构、权限、分享、发布、审计）。
 - **对象存储**：`$VIENTO_DATA_DIR/objects/` 为按 SHA-256 分片的内容寻址存储，`tar` 打包即可；对象不可变，冷备份安全。
-- **保留策略**：`VIENTO_TRASH_RETENTION_DAYS` / `VIENTO_VERSION_KEEP` / `VIENTO_AUDIT_RETENTION_DAYS` 为保留参数，v1 不执行自动清理任务，请结合备份策略手动清理（`DELETE FROM file_versions WHERE …`、对象目录按版本行反查）。
+- **保留策略（M2.42 起自动执行）**：进程内后台维护任务按 `VIENTO_JANITOR_INTERVAL_MINUTES`（默认 6 小时，启动即跑一轮）执行：回收站过期清理、每文件版本裁剪到 `VIENTO_VERSION_KEEP`、审计日志清理，以及**孤儿对象 GC**（任何版本都不引用、且落盘超过 24 小时的对象文件才会删除，避免误删刚上传尚未落库的对象）。每轮删除数量记 `janitor_run` 审计日志。需要人工介入时可将间隔设为 `0` 关闭。
+- **个人配额**：`users.quota_bytes` 默认 NULL（不限制），在「团队管理 → 用户 → 配额」按 MB 设置；超限写入返回 413 `QUOTA_EXCEEDED`。占用只统计未删除文件的当前版本，缩小配额不会删除已有文件。
+- **健康检查**：`GET /api/v1/health` 会真实探活数据库，DB 不可用时返回 `503`（反代/k8s 可直接据此摘流）。
 
 ## 9. 升级
 

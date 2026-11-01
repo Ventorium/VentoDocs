@@ -1,6 +1,6 @@
 //! 目录 ACL：授权 CRUD + 沿祖先路径链的权限解析（vk-core::perm 纯计算）。
 
-use super::{Result, StoreError};
+use super::{ROOT_DIR, Result, StoreError};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -130,18 +130,29 @@ impl Grants {
         if is_admin {
             return Ok(Perm::all());
         }
-        // 祖先链（含自身）：祖先 D 满足 目标path LIKE D.path || '%'（id 基路径，无通配符字符）
+        // 祖先链（含自身、含根）：目录 path 是 id 物化路径（`/id1/id2`），
+        // 直接解析成 id 列表后按主键 `id = ANY($2)` 取行——每条目录一次主键索引查找，
+        // 避免旧写法 `WHERE $path LIKE d.path || '%'`（拼接谓词用不上 path 索引）触发
+        // directories 全表扫描：权限解析是每个请求最热的查询，目录一多会线性劣化。
+        let path = self_path(pool, directory_id).await?;
+        let mut ids: Vec<Uuid> = Vec::with_capacity(8);
+        ids.push(ROOT_DIR);
+        for id in super::directories::Directories::parse_id_path(&path) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
         let rows = sqlx::query_as::<_, ChainRow>(
-            "SELECT d.id, d.path, d.created_by,
+            "SELECT d.created_by,
                     COALESCE(SUM(CASE WHEN g.principal_type = 'user' AND g.principal_id = $1 THEN g.perms ELSE 0 END), 0) AS user_perms,
                     COALESCE(SUM(CASE WHEN g.principal_type = 'team' AND g.principal_id IN (SELECT team_id FROM team_members WHERE user_id = $1) THEN g.perms ELSE 0 END), 0) AS team_perms
              FROM directories d
              LEFT JOIN grants g ON g.directory_id = d.id
-             WHERE $2 LIKE d.path || '%'
+             WHERE d.id = ANY($2)
              GROUP BY d.id, d.path, d.created_by",
         )
         .bind(user_id)
-        .bind(self_path(pool, directory_id).await?)
+        .bind(&ids)
         .fetch_all(pool)
         .await?;
 
@@ -210,7 +221,7 @@ impl Grants {
         for r in rows {
             let id: Uuid = r.get(0);
             if !seen.insert(id) {
-                continue
+                continue;
             }
             let perms = Self::resolve(pool, user_id, id, false).await?;
             out.push(SharedDir {
@@ -244,13 +255,12 @@ impl Grants {
         if is_admin {
             return Ok(Perm::all());
         }
-        let row: Option<(Uuid, Option<Uuid>)> =
-            sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
-                "SELECT directory_id, created_by FROM files WHERE id = $1",
-            )
-            .bind(file_id)
-            .fetch_optional(pool)
-            .await?;
+        let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
+            "SELECT directory_id, created_by FROM files WHERE id = $1",
+        )
+        .bind(file_id)
+        .fetch_optional(pool)
+        .await?;
         let (directory_id, created_by) =
             row.ok_or_else(|| StoreError::NotFound(format!("文件 {file_id}")))?;
         // M2.36：文件创建者恒等于 ALL（与目录创建者规则对齐）

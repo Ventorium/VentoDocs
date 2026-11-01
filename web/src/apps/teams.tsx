@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useRequest } from 'ahooks'
-import { CloudUpload, KeyRound, Plus, Users } from 'lucide-react'
+import { CloudUpload, Gauge, KeyRound, MoreHorizontal, Plus, Power, Trash2, Users } from 'lucide-react'
 import { client } from '@/api'
 import type { LdapImportResult, Role, Team, TeamDetail, User } from '@/api/schema'
-import { Btn, Drawer, Input, Modal, Select, Spin, Switch, Tabs, Tag } from '@/components/ui/kit'
+import { Btn, Drawer, Dropdown, IconBtn, Input, Modal, Select, Spin, Switch, Tabs, Tag } from '@/components/ui/kit'
+import type { DropItem } from '@/components/ui/kit'
 import { msg } from '@/components/ui/toast'
 import StateView from '@/components/StateView'
-import { formatTime } from '@/lib/format'
+import { formatBytes, formatTime } from '@/lib/format'
 import { useAuth } from '@/store/useAuth'
 
 type LdapConfigInfo = {
@@ -452,6 +453,19 @@ const UsersPanel = () => {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<LdapImportResult | null>(null)
 
+  // M2.41：禁用/启用即时生效（无确认框）；删除需二次确认 + 手输用户名
+  const [toggling, setToggling] = useState<string | null>(null)
+  const [delTarget, setDelTarget] = useState<User | null>(null)
+  const [delInput, setDelInput] = useState('')
+  const [delBusy, setDelBusy] = useState(false)
+
+  // M2.43：个人配额（空 = 不限制）
+  const [quotaTarget, setQuotaTarget] = useState<User | null>(null)
+  const [quotaMb, setQuotaMb] = useState('')
+  const [quotaSaving, setQuotaSaving] = useState(false)
+  const [quotaError, setQuotaError] = useState('')
+  const me = useAuth((s) => s.user)
+
   const { data: users, loading, error, refresh } = useRequest(async () => {
     const { error: err, data, response } = await client.get('/api/v1/users')
     if (err || !data) {
@@ -527,6 +541,104 @@ const UsersPanel = () => {
     refresh()
   }
 
+  const toggleDisabled = async (u: User) => {
+    setToggling(u.id)
+    const res = await client.patch('/api/v1/users/{id}', {
+      params: { id: u.id },
+      body: { disabled: !u.disabled },
+    })
+    setToggling(null)
+    if (res.error) return
+    msg.success(u.disabled ? `已启用 ${u.username}` : `已禁用 ${u.username}`)
+    refresh()
+  }
+
+  const openDelete = (u: User) => {
+    setDelTarget(u)
+    setDelInput('')
+  }
+
+  const doDelete = async () => {
+    if (!delTarget || delInput.trim() !== delTarget.username) return
+    setDelBusy(true)
+    const res = await client.delete('/api/v1/users/{id}', { params: { id: delTarget.id } })
+    setDelBusy(false)
+    if (res.error) return
+    msg.success(`用户 ${delTarget.username} 已删除`)
+    setDelTarget(null)
+    setDelInput('')
+    refresh()
+  }
+
+  /** 行内「...」菜单：编辑留在外面，其余操作收进下拉。 */
+  const userMenu = (u: User): DropItem[] => {
+    const items: DropItem[] = []
+    if (u.auth_provider === 'local') {
+      items.push({
+        key: 'pwd',
+        label: '重置密码',
+        icon: <KeyRound size={13} />,
+        onClick: () => openPwd(u),
+      })
+    }
+    items.push({
+      key: 'quota',
+      label: '存储配额',
+      icon: <Gauge size={13} />,
+      onClick: () => openQuota(u),
+    })
+    items.push({
+      key: 'toggle',
+      label: u.disabled ? '启用账号' : '禁用账号',
+      icon: <Power size={13} />,
+      disabled: toggling === u.id,
+      onClick: () => void toggleDisabled(u),
+    })
+    items.push({ key: 'div', label: '', divider: true })
+    items.push({
+      key: 'del',
+      label: '删除用户',
+      icon: <Trash2 size={13} />,
+      danger: true,
+      disabled: me?.id === u.id,
+      onClick: () => openDelete(u),
+    })
+    return items
+  }
+
+  const openQuota = (u: User) => {
+    setQuotaTarget(u)
+    setQuotaMb(u.quota_bytes ? String(Math.round(u.quota_bytes / 1024 / 1024)) : '')
+    setQuotaError('')
+  }
+
+  const doSaveQuota = async () => {
+    if (!quotaTarget) return
+    const raw = quotaMb.trim()
+    let quotaBytes: number | null = null
+    if (raw !== '') {
+      const mb = Number(raw)
+      if (!Number.isFinite(mb) || mb < 0) {
+        setQuotaError('请输入不小于 0 的数字（单位 MB），留空表示不限制')
+        return
+      }
+      quotaBytes = Math.round(mb * 1024 * 1024)
+    }
+    setQuotaSaving(true)
+    const res = await client.put('/api/v1/users/{id}/quota', {
+      params: { id: quotaTarget.id },
+      body: { quota_bytes: quotaBytes },
+    })
+    setQuotaSaving(false)
+    if (res.error) {
+      setQuotaError(res.response?.status === 400 ? '配额超出允许范围' : '保存失败')
+      return
+    }
+    msg.success(quotaBytes === null ? `已取消 ${quotaTarget.username} 的配额限制` : `已设置 ${quotaTarget.username} 的配额`)
+    setQuotaTarget(null)
+    refresh()
+  }
+
   const openPwd = (u: User) => {
     setPwdTarget(u)
     setPwd('')
@@ -594,7 +706,8 @@ const UsersPanel = () => {
                   <th style={{ width: 90 }}>角色</th>
                   <th style={{ width: 90 }}>状态</th>
                   <th style={{ width: 160 }}>创建时间</th>
-                  <th style={{ width: 280 }}>操作</th>
+                  <th style={{ width: 150 }}>配额</th>
+                  <th style={{ width: 130 }}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -611,19 +724,38 @@ const UsersPanel = () => {
                     <td>{u.disabled ? <Tag color="red">已禁用</Tag> : <Tag color="green">正常</Tag>}</td>
                     <td>{formatTime(u.created_at)}</td>
                     <td>
-                      <span style={{ display: 'inline-flex', gap: 4 }}>
+                      <span
+                        title={
+                          u.quota_bytes
+                            ? `已用 ${formatBytes(u.used_bytes)} / 配额 ${formatBytes(u.quota_bytes)}`
+                            : `已用 ${formatBytes(u.used_bytes)} / 不限制`
+                        }
+                        style={{
+                          color:
+                            u.quota_bytes && u.used_bytes >= u.quota_bytes
+                              ? 'var(--vd-accent-danger)'
+                              : 'var(--vd-text-secondary)',
+                          fontSize: 12,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {formatBytes(u.used_bytes)} / {u.quota_bytes ? formatBytes(u.quota_bytes) : '不限'}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                         <Btn size="xs" variant="ghost" onClick={() => openEdit(u)}>
                           编辑
                         </Btn>
-                        {u.auth_provider === 'local' ? (
-                          <Btn size="xs" variant="ghost" onClick={() => openPwd(u)}>
-                            <KeyRound size={12} style={{ verticalAlign: '-2px', marginRight: 3 }} />
-                            重置密码
-                          </Btn>
-                        ) : null}
-                        <Btn size="xs" variant={u.disabled ? 'danger' : 'ghost'} onClick={() => openEdit(u)}>
-                          {u.disabled ? '启用' : '禁用'}
-                        </Btn>
+                        <Dropdown
+                          width={150}
+                          button={
+                            <IconBtn small aria-label="更多操作" title="更多操作">
+                              <MoreHorizontal size={15} />
+                            </IconBtn>
+                          }
+                          items={userMenu(u)}
+                        />
                       </span>
                     </td>
                   </tr>
@@ -754,6 +886,103 @@ const UsersPanel = () => {
               </span>
               <Switch checked={!eu.disabled} onChange={(v) => setEu((s) => ({ ...s, disabled: !v }))} />
             </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 个人配额（M2.43） */}
+      <Modal
+        open={!!quotaTarget}
+        title={quotaTarget ? `存储配额 · ${quotaTarget.username}` : '存储配额'}
+        onClose={() => setQuotaTarget(null)}
+        footer={
+          <>
+            <Btn onClick={() => setQuotaTarget(null)}>取消</Btn>
+            <Btn variant="primary" loading={quotaSaving} onClick={() => void doSaveQuota()}>
+              保存
+            </Btn>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--vd-text-secondary)', lineHeight: 1.7 }}>
+            当前占用 <b>{quotaTarget ? formatBytes(quotaTarget.used_bytes) : '—'}</b>
+            {quotaTarget?.quota_bytes ? ` / 配额 ${formatBytes(quotaTarget.quota_bytes)}` : ' / 不限制'}。
+            占用按「名下未删除文件的当前版本大小」统计（回收站与历史版本不计入）；留空表示不限制。
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span className="vd-field-label">配额上限（MB，留空 = 不限制）</span>
+            <Input
+              placeholder="例如 1024"
+              value={quotaMb}
+              onChange={(e) => {
+                setQuotaMb(e.target.value)
+                setQuotaError('')
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && void doSaveQuota()}
+              autoFocus
+            />
+            {quotaError ? (
+              <span style={{ fontSize: 12, color: 'var(--vd-accent-danger)' }}>{quotaError}</span>
+            ) : null}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--vd-text-tertiary)' }}>
+            超出配额时上传/保存/复制会被拒绝（HTTP 413，`QUOTA_EXCEEDED`）；缩小配额不会删除已有文件。
+          </div>
+        </div>
+      </Modal>
+
+      {/* 删除用户（二次确认 + 手输用户名） */}
+      <Modal
+        open={!!delTarget}
+        title={delTarget ? `删除用户 ${delTarget.username}` : '删除用户'}
+        onClose={() => {
+          if (!delBusy) setDelTarget(null)
+        }}
+        footer={
+          <>
+            <Btn onClick={() => setDelTarget(null)} disabled={delBusy}>
+              取消
+            </Btn>
+            <Btn
+              variant="danger"
+              loading={delBusy}
+              disabled={!delTarget || delInput.trim() !== delTarget.username}
+              onClick={() => void doDelete()}
+            >
+              永久删除
+            </Btn>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div
+            style={{
+              padding: '10px 12px',
+              borderRadius: 6,
+              fontSize: 12,
+              lineHeight: 1.7,
+              color: 'var(--vd-accent-danger)',
+              background: 'var(--vd-bg-subtle, rgba(220,38,38,.06))',
+              border: '1px solid var(--vd-accent-danger)',
+            }}
+          >
+            此操作不可撤销：账号将被永久删除，其所有已签发的登录凭证立即失效；名下的文件/目录会转交给当前管理员；
+            其发起的分享将被撤销、发布站点将被停用，团队成员关系与授权记录一并移除。
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span className="vd-field-label">
+              请输入用户名 <b style={{ color: 'var(--vd-accent-danger)' }}>{delTarget?.username}</b> 以确认
+            </span>
+            <Input
+              value={delInput}
+              placeholder={delTarget?.username}
+              onChange={(e) => setDelInput(e.target.value)}
+              autoFocus
+            />
+            {delTarget && delInput.trim() && delInput.trim() !== delTarget.username ? (
+              <span style={{ fontSize: 12, color: 'var(--vd-accent-danger)' }}>用户名不一致</span>
+            ) : null}
           </div>
         </div>
       </Modal>

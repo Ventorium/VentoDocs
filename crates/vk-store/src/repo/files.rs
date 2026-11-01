@@ -644,6 +644,18 @@ impl Files {
         Ok(rows)
     }
 
+    /// 指定版本的体积（配额校验用）。
+    pub async fn version_size(pool: &PgPool, file_id: Uuid, version: u32) -> Result<i64> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT size FROM file_versions WHERE file_id = $1 AND version = $2")
+                .bind(file_id)
+                .bind(version as i32)
+                .fetch_optional(pool)
+                .await?;
+        row.map(|r| r.0)
+            .ok_or_else(|| StoreError::NotFound(format!("文件 {file_id} 的版本 {version}")))
+    }
+
     /// 下载/预览用：取 current 版本对象引用 `(sha256, 存储编码)`。
     pub async fn current_ref(pool: &PgPool, file_id: Uuid) -> Result<(String, String)> {
         let r = Self::get_row(pool, file_id).await?;

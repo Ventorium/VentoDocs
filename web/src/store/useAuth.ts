@@ -10,6 +10,9 @@ export type AuthUser = {
   auth_provider: 'local' | 'ldap'
   disabled: boolean
   created_at: string
+  /** 个人配额（字节，null = 不限制）与当前占用（M2.43；/auth/me 返回，用于上传预检）。 */
+  quota_bytes?: number | null
+  used_bytes?: number
 }
 
 export type LoginForm = { username: string; password: string }
@@ -60,6 +63,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (!error && data) {
       setAccessToken(data.token)
       set({ user: data.user })
+      // 登录响应不含配额字段：补一次 /auth/me，供上传前配额预检使用
+      void get().refreshMe()
       return data.user
     }
     return null
@@ -73,6 +78,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     return user
   },
   logout() {
+    // M2.41：先让服务端吊销（token_version 自增），再清本地；失败也照常本地登出
+    void client.post('/api/v1/auth/logout', { body: undefined }).catch(() => undefined)
     set({ user: null })
     onExpired()
   }

@@ -100,15 +100,17 @@ async fn main() -> anyhow::Result<()> {
     // M2.24：分享端口——第二监听，独立端口服务同一应用（/s/{token} 分享链接对外）。
     // 端口优先级：system_settings.share.port（管理端可改）> VENTO_SHARE_PORT > 8090；
     // 修改端口需重启服务生效（管理端设置页有提示）。
-    let share_port: u16 = vk_store::repo::settings::SystemSettings::get(
-        db.pool(),
-        vk_api::settings::SHARE_KEY,
-    )
-    .await
-    .and_then(|v| v.get("port").and_then(serde_json::Value::as_u64))
-    .and_then(|p| u16::try_from(p).ok())
-    .or_else(|| std::env::var("VENTO_SHARE_PORT").ok().and_then(|v| v.parse().ok()))
-    .unwrap_or(vk_api::settings::DEFAULT_SHARE_PORT);
+    let share_port: u16 =
+        vk_store::repo::settings::SystemSettings::get(db.pool(), vk_api::settings::SHARE_KEY)
+            .await
+            .and_then(|v| v.get("port").and_then(serde_json::Value::as_u64))
+            .and_then(|p| u16::try_from(p).ok())
+            .or_else(|| {
+                std::env::var("VENTO_SHARE_PORT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+            })
+            .unwrap_or(vk_api::settings::DEFAULT_SHARE_PORT);
 
     let state = vk_api::AppState {
         db,
@@ -116,12 +118,16 @@ async fn main() -> anyhow::Result<()> {
         cfg: Arc::new(cfg),
         share_port,
     };
+    // 后台维护（回收站过期清理 / 版本裁剪 / 孤儿对象 GC / 审计保留）
+    vk_api::janitor::spawn(state.clone());
     let app = vk_api::router(state.clone()).merge(static_files(state.clone()));
     // 发布子域名路由（§11）：{publish_id}.{VIENTO_PUBLISH_DOMAIN}
     let app = app.layer(axum::middleware::from_fn_with_state(
         state.clone(),
         host_publish_route,
     ));
+    // 基础安全响应头：作用于整个应用（API + 内嵌 SPA + 编辑器 + 发布站点）。
+    let app = app.layer(axum::middleware::from_fn(vk_api::security_headers));
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     info!(addr = %cli.bind, "VentoDocs 已启动（主端口）");
@@ -133,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     } else {
         match tokio::net::TcpListener::bind(share_addr).await {
@@ -141,12 +148,15 @@ async fn main() -> anyhow::Result<()> {
                 let (main_result, _share_result) = tokio::join!(
                     axum::serve(
                         listener,
-                        app.clone().into_make_service_with_connect_info::<SocketAddr>(),
-                    ),
+                        app.clone()
+                            .into_make_service_with_connect_info::<SocketAddr>(),
+                    )
+                    .with_graceful_shutdown(shutdown_signal()),
                     axum::serve(
                         share_listener,
                         app.into_make_service_with_connect_info::<SocketAddr>(),
-                    ),
+                    )
+                    .with_graceful_shutdown(shutdown_signal()),
                 );
                 // 主端口异常退出；分享端口先行异常（如网络变更）不影响主服务。
                 main_result?;
@@ -157,11 +167,39 @@ async fn main() -> anyhow::Result<()> {
                     listener,
                     app.into_make_service_with_connect_info::<SocketAddr>(),
                 )
+                .with_graceful_shutdown(shutdown_signal())
                 .await?;
             }
         }
     }
+    info!("已停止");
     Ok(())
+}
+
+/// 优雅停机：SIGINT / SIGTERM 触发（部署脚本 SIGTERM 不再硬杀在途请求）。
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "无法监听 SIGTERM，仅支持 Ctrl+C 停机");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    info!("收到关停信号，开始优雅停机");
 }
 
 /// 前端静态资源 + 在线编辑器：
@@ -323,7 +361,9 @@ fn static_files(state: vk_api::AppState) -> axum::Router {
             return editor_not_deployed();
         };
         // 路径穿越防护：拒绝绝对路径、`..` 段与空段（rel 本身可为空，表示 /document/ 根）
-        if !rel.is_empty() && (rel.starts_with('/') || rel.split('/').any(|seg| seg == ".." || seg.is_empty())) {
+        if !rel.is_empty()
+            && (rel.starts_with('/') || rel.split('/').any(|seg| seg == ".." || seg.is_empty()))
+        {
             return editor_not_deployed();
         }
         let target = if rel.is_empty() {
@@ -358,7 +398,9 @@ fn static_files(state: vk_api::AppState) -> axum::Router {
             axum::response::Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                .body(axum::body::Body::from(format!("Not Found: /document/{rel}\n")))
+                .body(axum::body::Body::from(format!(
+                    "Not Found: /document/{rel}\n"
+                )))
                 .unwrap_or_default()
         } else {
             // 无扩展名路径（编辑器自身的 clean-url 页面）→ 回退 index.html
@@ -391,10 +433,7 @@ fn static_files(state: vk_api::AppState) -> axum::Router {
         h.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
         h.insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
         let immutable: header::HeaderValue = "public, max-age=31536000, immutable".parse().unwrap();
-        if rel.starts_with("assets/")
-            || fonts_catalog
-            || is_x2t_wasm
-        {
+        if rel.starts_with("assets/") || fonts_catalog || is_x2t_wasm {
             h.insert(header::CACHE_CONTROL, immutable);
         }
         if rel == "build-identity.json" {
@@ -500,13 +539,14 @@ async fn host_publish_route(
     if path.starts_with("/api/") || path == "/_env" {
         return run_next(next, req).await;
     }
-    let w = match vk_store::repo::publishes::Publishes::get_by_publish_id(state.db.pool(), pid).await {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::error!(error = %e, "发布站点查询失败");
-            return run_next(next, req).await;
-        }
-    };
+    let w =
+        match vk_store::repo::publishes::Publishes::get_by_publish_id(state.db.pool(), pid).await {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!(error = %e, "发布站点查询失败");
+                return run_next(next, req).await;
+            }
+        };
     let Some(w) = w else {
         return gone_response();
     };
@@ -518,7 +558,12 @@ async fn host_publish_route(
     let raw_path = req.uri().path().to_string();
     let query = req.uri().query().map(|s| s.to_string());
     let hdrs = headers.clone();
-    let body = if *req.method() == axum::http::Method::POST {
+    let is_post = method == axum::http::Method::POST;
+    // 站点密码门 = 公开口令尝试：失败次数限流（与登录/分享同策略）。
+    if is_post && let Some(resp) = vk_api::rate_limit::site_password_blocked() {
+        return resp;
+    }
+    let body = if is_post {
         match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
             Ok(b) => Some(b.to_vec()),
             Err(e) => {
@@ -529,12 +574,15 @@ async fn host_publish_route(
     } else {
         None
     };
-    vk_api::site::serve_site(&state, &w, &method, &hdrs, &raw_path, query, body).await
+    let resp = vk_api::site::serve_site(&state, &w, &method, &hdrs, &raw_path, query, body).await;
+    if is_post {
+        let ok = resp.status().is_success() || resp.status() == axum::http::StatusCode::FOUND;
+        vk_api::rate_limit::record_site_password_result(ok);
+    }
+    resp
 }
 
 /// 去端口（`example.com:8090` → `example.com`）。
 fn strip_port(s: String) -> String {
-    s.split_once(':')
-        .map(|(h, _)| h.to_string())
-        .unwrap_or(s)
+    s.split_once(':').map(|(h, _)| h.to_string()).unwrap_or(s)
 }

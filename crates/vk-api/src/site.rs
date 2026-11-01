@@ -16,19 +16,19 @@
 //! `preview_only`：与 anon 相同地内联服务（“仅预览”语义 = 禁止下载附件）。
 
 use axum::body::Body;
-use axum::http::header::{self, HeaderMap, COOKIE, SET_COOKIE};
+use axum::http::header::{self, COOKIE, HeaderMap, SET_COOKIE};
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use vk_core::model::{EntryKind, FileEntry};
+use vk_store::StoreError;
 use vk_store::repo::directories::Directories;
 use vk_store::repo::files::Files;
 use vk_store::repo::publishes::PublishWithDir;
 use vk_store::repo::users::verify_password;
-use vk_store::StoreError;
 
+use crate::AppState;
 use crate::auth::{sign_site_token, verify_site_token};
 use crate::files::{deliver_current, guess_mime};
-use crate::AppState;
 
 /// 站点 token / 密码门 cookie 有效期（小时）。
 const SITE_TOKEN_TTL_HOURS: u64 = 24;
@@ -64,6 +64,15 @@ pub async fn serve_site(
     query: Option<String>,
     body: Option<Vec<u8>>,
 ) -> Response {
+    // 0) 路径规范化：`//evil.com` 这类协议相对路径会让 308 跳转变成站外开放重定向，
+    //    统一折叠为单个前导斜杠（解析出的段不变，展示/跳转都安全）。
+    let normalized;
+    let path: &str = if path.starts_with("//") {
+        normalized = format!("/{}", path.trim_start_matches('/'));
+        normalized.as_str()
+    } else {
+        path
+    };
     // 1) login 策略 → 站点密码门
     if w.publish.policy == "login" {
         let cookie_name = format!("vd_site_{}", w.publish.publish_id);
@@ -245,10 +254,10 @@ async fn serve_file(state: &AppState, pool: &sqlx::PgPool, f: &FileEntry) -> Res
 /// M2.29：站点文件交付后的响应头修正。
 fn patch_site_headers(resp: &mut Response, name: &str) {
     let guessed = guess_mime(name);
-    if guessed != "application/octet-stream" {
-        if let Ok(ct) = guessed.parse() {
-            resp.headers_mut().insert(header::CONTENT_TYPE, ct);
-        }
+    if guessed != "application/octet-stream"
+        && let Ok(ct) = guessed.parse()
+    {
+        resp.headers_mut().insert(header::CONTENT_TYPE, ct);
     }
     let lower = name.to_lowercase();
     if lower.ends_with(".html") || lower.ends_with(".htm") {
@@ -278,7 +287,11 @@ async fn password_post(
     if !ok {
         return gate_page(Some("站点密码错误"), path);
     }
-    let token = match sign_site_token(&state.cfg.jwt_secret, &w.publish.publish_id, SITE_TOKEN_TTL_HOURS) {
+    let token = match sign_site_token(
+        &state.cfg.jwt_secret,
+        &w.publish.publish_id,
+        SITE_TOKEN_TTL_HOURS,
+    ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(error = %e, "站点令牌签发失败");
@@ -365,7 +378,10 @@ fn extract_password(body: Option<&[u8]>) -> Option<String> {
     let s = std::str::from_utf8(b).ok()?.trim();
     if s.starts_with('{') {
         let v = serde_json::from_str::<serde_json::Value>(s).ok()?;
-        return v.get("password").and_then(|p| p.as_str()).map(|p| p.to_string());
+        return v
+            .get("password")
+            .and_then(|p| p.as_str())
+            .map(|p| p.to_string());
     }
     for kv in s.split('&') {
         let (k, v) = kv.split_once('=')?;

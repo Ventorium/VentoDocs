@@ -23,13 +23,14 @@ pub fn scope_client_ip<R: std::future::Future>(
 }
 
 /// 读取当前请求的客户端 IP（非请求上下文返回 None）。
-fn current_ip() -> Option<String> {
+/// pub：限流中间件（`vk_api::rate_limit`）也用它作为客户端标识。
+pub fn client_ip() -> Option<String> {
     CLIENT_IP.try_with(|v| v.clone()).ok().flatten()
 }
 
 /// 解析审计 IP：显式参数优先，缺省时取当前请求上下文。
 fn resolve_ip(ip: Option<&str>) -> Option<String> {
-    ip.map(str::to_string).or_else(current_ip)
+    ip.map(str::to_string).or_else(client_ip)
 }
 
 /// 审计日志行（列表查询用，含操作人名称）。
@@ -74,7 +75,18 @@ impl Audit {
         detail: serde_json::Value,
         ip: Option<&str>,
     ) -> Result<()> {
-        Self::log_named(pool, actor, None, category, action, resource_type, resource_id, detail, ip).await
+        Self::log_named(
+            pool,
+            actor,
+            None,
+            category,
+            action,
+            resource_type,
+            resource_id,
+            detail,
+            ip,
+        )
+        .await
     }
 
     /// 在独立连接上写审计（匿名访问者，如分享访客）。
@@ -120,7 +132,18 @@ impl Audit {
         detail: serde_json::Value,
         ip: Option<&str>,
     ) -> Result<()> {
-        Self::log_tx_named(exec, actor, None, category, action, resource_type, resource_id, detail, ip).await
+        Self::log_tx_named(
+            exec,
+            actor,
+            None,
+            category,
+            action,
+            resource_type,
+            resource_id,
+            detail,
+            ip,
+        )
+        .await
     }
 
     /// 在事务内写审计（匿名访问者）。

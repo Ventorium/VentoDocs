@@ -1388,3 +1388,224 @@ node /tmp/pw-check/m231-trash-name.mjs   # 20 项，自包含自建测试目录�
 **环境**：app `http://127.0.0.1:8080`（admin / Admin@12345；alice / M232alice!uz2o8h）；服务端 pid **356855**（双端口 8080+8090，内嵌 index-h6xHhFBy.js / pages-uqjB7z5N.js）；演示数据（演示-团队共享/演示-分享给我 及授权、团队「研发」）未动。
 
 **结论**：M2.38 完成——① F2 内联重命名与 Delete 键按授权位门控，与右键菜单完全同口径（无 admin 旁路）；② 个人文件根视图对**所有用户（含 admin）**仅显示自己创建的顶层条目，他人共享条目只出现在团队共享/分享给我作用域；③ 信息面板对非创建者选择不再请求创建者专属端点，控制台 403 噪音清零（授权区块隐藏、链接数不显示、发布状态「—」，共享作用域内仍经 sharedMeta 显示「已分享 · 来自 {owner}」）。21/21 + 48/48 + 8/8 全绿。
+
+### 2026-10-31 (UTC+8) M2.39 回收站多选 / 全选 / 快捷键支持
+
+**任务**：「回收站也要支持多选 全选 快捷键」。多选（点击 / Ctrl+点击 / Shift+连选）自 M2.6 已存在；本次补齐**全选**与**键盘快捷键**，操作口径与文件管理器多列视图（ColumnView）对齐。
+
+**设计决策**：
+- 快捷键集：`Ctrl/Cmd+A` 全选；`↑/↓` 单行选择移动（无选择时落到首行）；`Shift+↑/↓` 从锚点连选；`Delete/Backspace` 彻底删除当前选择；`Esc` 取消选择。与文件管理器（F2 重命名、Delete 删除、↑↓ 导航）交互语言一致。
+- **Delete 键仅作用于文件**（与右键菜单、顶部「批量彻底删除」按钮同口径——后端无目录彻底删除端点）；选择集中全是目录时提示 toast「彻底删除仅支持文件，暂不支持目录」，混合时静默只删文件子集（与既有按钮行为一致），避免无声无操作。
+- 焦点模型复用 ColumnView 模式：表格容器 `tabIndex={-1}` + 挂载后 `focus()`；点击行（非 focusable 子元素）浏览器自动把焦点交给容器，之后键盘即生效。合成 KeyboardEvent 经 React 合成系统正常触发。
+- 模态打开期间（恢复改名框 / 彻底删除确认框）列表快捷键整体失效，避免确认框未关时 Delete 二次触发。
+- 提示文案更新为：「点击选中，Cmd/Ctrl+单击 多选，Shift+单击 连选；快捷键：Ctrl/Cmd+A 全选、↑↓ 移动选择、Shift+↑↓ 连选、Delete 彻底删除（仅文件）、Esc 取消选择；右键或顶部按钮恢复 / 彻底删除（仅文件）。」
+
+**代码改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `web/src/apps/trash.tsx` | ① 引入 `useEffect`/`useRef`；表格容器加 `wrapRef` + `tabIndex={-1}` + `onKeyDown={onTableKey}`，挂载后聚焦。② 新增 `onTableKey`：模态打开守卫 → `Ctrl/Cmd+A` 全选 → `↑/↓` 选择移动（`anchorId` 驱动，Shift 版为锚点区间）→ `Delete/Backspace` 走既有 `purgeTargets`（全目录时 toast 拦截）→ `Esc` 清空选择。③ 提示文案列出快捷键全集。复用既有 `purgeTargets`/`selectedIds`/`anchorId`，无新状态。 |
+
+**验证命令与结果**：
+
+| 验证 | 命令 | 结果 |
+|---|---|---|
+| SPA 重建 + 重嵌 + 重启 | `pnpm -C web build`（index-DxVpSgui.js / pages-CCMztOCr.js）→ `source $HOME/.cargo/env && cargo build` → kill 356855 → `nohup ./target/debug/vento &` | 新 pid **544190**；8080/8090 = 200；`curl /` 引用 index-DxVpSgui.js |
+| M2.39 e2e（新增） | `node /tmp/pw-check/m239-trash-kbd.mjs`（26 项，先经 API 造 1 目录 + 3 文件入回收站） | **26/26 通过**：S1 造数入站；U1 行齐全；U2 提示文案含「Ctrl/Cmd+A 全选」「Delete 彻底删除」；U3 ArrowDown 选中首行；U4 Shift+ArrowDown 连选 2 行；U5 Escape 清空；U6 Ctrl+A 全选、再 Escape；U7 点选单文件 Delete → 确认框含文件名 → 确认 → API 确认文件已彻底删除 + toast「已彻底删除」；U8 目录 Delete 无弹窗 + toast「彻底删除仅支持文件」+ 目录仍在；U9 删除后 Ctrl+A 全选行数一致、Escape 清空；U10 零意外错误 toast / 零 pageerror / 零 4xx |
+| 回归 M2.31（回收站重名恢复） | `node /tmp/pw-check/m231-trash-name.mjs` | **20/20 通过** |
+| 回归 M2.36（权限菜单） | `node /tmp/pw-check/m236-e2e.mjs` | **48/48 通过** |
+| 回归 M2.37（锁定图标） | `node /tmp/pw-check/m237-lock-icon.mjs` | **8/8 通过** |
+| 回归 M2.38（权限门控） | `node /tmp/pw-check/m238-e2e.mjs` | **21/21 通过** |
+
+**环境**：app `http://127.0.0.1:8080`（admin / Admin@12345；alice / M232alice!uz2o8h）；服务端 pid **544190**（双端口 8080+8090，内嵌 index-DxVpSgui.js / pages-CCMztOCr.js）。e2e 造数：`tmp-m239-*` 目录 + 3 文件入回收站，其中 1 文件被 e2e 彻底删除、目录留在回收站（180 天保留期自动清理）；演示数据（演示-团队共享/演示-分享给我 及授权、团队「研发」）未动。
+
+**结论**：M2.39 完成——回收站补齐全选（Ctrl/Cmd+A）与键盘快捷键（↑↓ 选择移动、Shift+↑↓ 连选、Delete 彻底删除、Esc 取消），交互口径与文件管理器一致；Delete 键沿用「彻底删除仅文件」语义并在纯目录选择时给出提示。26/26 + 20/20 + 48/48 + 8/8 + 21/21 全绿。
+
+### 2026-10-31 (UTC+8) M2.40 全维度审计（性能 / 安全 / 网络安全 / 架构 / 权限）与修复
+
+**任务**：「从性能 安全 网络安全 架构 权限等多角度再去评估当前项目 看看是否有问题 有则改之」。逐模块审阅（入口配置、认证、限流、路由、搜索、权限解析、zip 预览、对象存储、发布/分享公开端点、迁移与索引）后，修复 9 项真实问题，其余列为残余风险。
+
+**关键发现与修复**：
+
+| 维度 | 问题（发现） | 处置 |
+|---|---|---|
+| 安全 | 口令端点无任何防暴力破解：`/auth/login`、分享密码校验 `/public/shares/{token}/verify`、发布站点密码、站点密码门均可无限次尝试（argon2 每次 64MB，同时是内存放大器） | 新增 `vk-api/src/rate_limit.rs`：进程内固定窗口计数器（**只统计 401/403/400 失败**，成功一次清零；10 次/5 分钟/IP/端点 → 429 `RATE_LIMITED` + `Retry-After`，表 >4096 条惰性清理）。以 `route_layer` 分组挂到登录/分享/发布/站点密码门 |
+| 网络安全 | `CorsLayer::permissive()`：任意站点可携带 Bearer 令牌跨域读写接口 | 默认**不启用 CORS**（同源即可，SPA/分享/发布站点与 API 均同源）；仅当 `VIENTO_CORS_ORIGINS` 显式配置白名单才放开，且只允许必要方法与头 |
+| 网络安全 | 无基础安全响应头 | 新增 `vk_api::security_headers` 中间件，对**整个应用**（API + 内嵌 SPA + 编辑器 + 发布站点）统一加 `X-Content-Type-Options: nosniff`、`X-Frame-Options: SAMEORIGIN`、`Referrer-Policy: same-origin`（幂等，已存在不覆盖）；CSP 暂不加（编辑器 WASM/内联脚本会被打断） |
+| 网络安全 | `X-Forwarded-For` 无条件信任 → 审计 IP 可伪造，且**可绕过按 IP 的限流** | 新增 `VIENTO_TRUST_PROXY`（默认 false）：直连部署只认 TCP 对端地址，挂可信反代才启用转发头 |
+| 安全/性能 | zip 预览把整包读进内存（≤512MB/请求），且条目解压按**声明大小**预分配 + 不限量 `read_to_end`（伪造声明即可内存放大 / 解压炸弹） | `zip_object_path` 只给出磁盘路径，`spawn_blocking` 用 `std::fs::File` 直接流式解析（不再整包驻留）；条目读取加 `Read::take(128MB+1)` 硬截断，预分配按上限夹紧 |
+| 安全 | `Content-Disposition` 的 ASCII 回退只过滤 `"`/`\`，文件名含控制字符（CR/LF/NUL）会构造出非法头值 → 下载 500（且是头注入隐患） | 回退名过滤 `is_ascii_control()`；鉴权下载/zip 条目补 `Cache-Control: private, no-store`（防代理缓存导致权限收回后仍可读） |
+| 性能 | `Grants::resolve`（每请求最热查询，每个请求调用 1–2 次）用 `$path LIKE d.path \|\| '%'`：拼接谓词用不上 `idx_directories_path`，实测 `Seq Scan on directories`（318 行全扫）+ `grants` 全扫 | 物化路径解析成 id 链，改 `WHERE d.id = ANY($2)`（主键索引，实测 `Index Scan using directories_pkey`，扫描行数 318 → 2） |
+| 性能 | 文件名搜索的可见性用 3 个 `EXISTS ... d.path LIKE a.path \|\| '%'`（逐文件嵌套扫描目录表）；`directories.path` 普通 btree 在默认排序规则下用不了前缀 LIKE；`team_members` 只有 `(team_id,user_id)` 主键，`WHERE user_id=` 全扫 | 先取「可见目录路径」去冗余，再把前缀展开成 `d.path LIKE $n OR ...`（`LIKE ANY(array)` 实测不走索引，展开后 `BitmapOr` 命中新索引）；新增迁移 `00000000000011_perf_indexes.sql`：`directories(path text_pattern_ops)`、`team_members(user_id)`、`directories(created_by)`、`audit_logs(actor_id, ts)`、`files/directories` 回收站部分索引 |
+| 架构 | `bootstrap` 读-判-写 TOCTOU（并发可建出两个管理员） | 事务内 `pg_advisory_xact_lock` 串行化「检查→建号」，提交后才释放 |
+| 架构 | 无优雅停机（SIGTERM 直接杀在途请求）；`Cargo.lock` 被 `.gitignore` 忽略（二进制应用无法复现构建） | `with_graceful_shutdown(SIGINT/SIGTERM)`；`.gitignore` 放开 `Cargo.lock` 并注释缘由（文件已可入库） |
+| 权限 | 抽查全部 handler 的鉴权顺序：目录/文件写操作 `require_perm`/`require_file_perm`，授权与分享/发布管理 `can_manage_grants`/创建者门控（M2.35），回收站列表按可恢复性过滤，审计仅 admin、通知按 actor 过滤；搜索可见性 = 管理员旁路 ∪ 创建者 ∪ user 授权 ∪ team 授权 | **未发现越权缺口**；搜索重写保持完全相同的可见性语义（e2e 用无授权新用户验证：他人目录详情 403、搜不到他人文件；能搜到自己文件；管理员全量） |
+
+**代码改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `crates/vk-api/src/rate_limit.rs`（新） | 进程内失败计数限流 + 三个端点守卫 + 站点密码门计数 + 单元测试 |
+| `crates/vk-api/src/lib.rs` | `Config.cors_origins` / `Config.trust_proxy`；口令端点分组挂限流；CORS 白名单化；`security_headers` 中间件；`attach_client_ip` 改为 with_state 且默认不信任转发头 |
+| `crates/vk-api/src/search.rs` | 可见性改为前缀数组 + OR 展开 LIKE（>64 前缀退回 ANY） |
+| `crates/vk-api/src/files.rs` | zip 预览改路径流式解析；解压按实际字节截断；`content_disposition` 过滤控制字符；鉴权下载/zip 条目 `Cache-Control: private, no-store` |
+| `crates/vk-api/src/auth.rs` | bootstrap 加 advisory lock + 提交点 |
+| `crates/vk-app/src/main.rs` | 安全头整站中间件；站点密码门限流；双端口优雅停机 |
+| `crates/vk-store/src/repo/grants.rs` | `resolve` 改 id 链主键查询（含根目录，语义不变） |
+| `crates/vk-store/src/repo/audit.rs` | `client_ip()` 公开给限流用 |
+| `crates/vk-store/migrations/00000000000011_perf_indexes.sql`（新） | 5 组性能索引 |
+| `.gitignore` / `.env.example` | 放开 Cargo.lock；新增 `VIENTO_CORS_ORIGINS`、`VIENTO_TRUST_PROXY` 说明 |
+
+**验证命令与结果**：
+
+| 验证 | 命令 | 结果 |
+|---|---|---|
+| 编译 + 单测 | `source $HOME/.cargo/env && cargo build && cargo test` | 通过（含限流窗口单测、密码哈希单测、迁移单测） |
+| M2.40 新增审计 e2e | `node /tmp/pw-check/m240-audit.mjs`（30 项） | **30/30 通过**：三处路径安全头齐全；第三方 Origin 无 ACAO（预检也不放行）；bootstrap 二次 403；无授权新用户读他人目录 403 且搜索零结果、能搜到自己文件、管理员全量；zip 条目列表/内容可读、`path=../etc/passwd` 400、条目与鉴权下载均 `private, no-store`；连续 10 次错密码均 401，第 11 次 **429 `RATE_LIMITED` + `Retry-After`**，封锁期间正确密码同样 429 |
+| 索引生效验证 | `EXPLAIN`（psql） | 解析查询由 `Seq Scan on directories`（318 行）变为 `Index Scan using directories_pkey`（2 行）；`path LIKE '/x%' OR ...` 走 `BitmapOr → idx_directories_path_pattern`；搜索 `name ILIKE '%…%'` 走 `idx_files_name_trgm` |
+| 伪造 XFF 验证 | 带 `X-Forwarded-For: 9.9.9.9` 建目录后查审计 | 审计 IP 记为 `127.0.0.1`（转发头被忽略） |
+| 回归 | m231 / m236 / m237 / m238 / m239 | **20/20、48/48、8/8、21/21、26/26** 全绿 |
+| 部署 | `cargo build` → SIGTERM（优雅停机，进程秒退）→ `nohup ./target/debug/vento &` | 新 pid **643173**，8080/8090 = 200，`/api/v1/health` = 200，前端 bundle 未变（无前端改动） |
+
+**环境**：app `http://127.0.0.1:8080`（admin / Admin@12345；alice / M232alice!uz2o8h）；`vento-pg`（postgres:16）已应用迁移 11；e2e 造数（审计-* 目录、临时用户、测试 zip）全部清理，演示数据未动。
+
+**结论**：M2.40 完成——修复了口令端点无限次尝试、跨域任意放开、转发头信任、zip 内存放大/解压炸弹、下载头构造与缓存、权限解析与搜索的全表扫描、bootstrap 并发竞态、无优雅停机与依赖未锁定共 9 类问题；权限模型经逐 handler 复核未发现越权缺口。新增 30 项审计 e2e + 既有 123 项回归全绿。
+
+**残余风险（未改，需决策或部署配合）**：
+1. JWT 无吊销机制：改密/禁用只在下一次请求经 `disabled` 校验生效，**旧 token 在 TTL（默认 24h）内仍有效**；建议加 `users.token_version` 或黑名单。
+2. 进程内限流为单实例粒度，且重启即清空；水平扩展需换 Redis。
+3. 当前部署是 HTTP 直连，没有 HSTS/TLS；公网部署必须前置 TLS 反代（并置 `VIENTO_TRUST_PROXY=true`），发布站点 cookie 也应加 `Secure`。
+4. 无全局请求超时（慢速请求可持续占连接）；上传需大超时，故未加统一 `TimeoutLayer`。
+5. LDAP「测试连接」允许管理员指定任意 host:port（内网探测面，仅 admin）。
+6. 发布站点 `site::serve_content` 每级路径 2 次查询、无缓存，深路径高 QPS 时可考虑加内存缓存。
+7. 用户删除接口缺失，历史 e2e 遗留约 40 个 disabled 测试账号（数据卫生，建议加清理脚本/接口）。
+
+### 2026-11-01 (UTC+8) M2.41 JWT 吊销 + 用户禁用/删除
+
+**任务**：「1. jwt_token要加 2. 用户要支持禁用 删除 禁用用户不需要提醒 删除用户需要二次提醒并手动再输入用户名称 3. 再从其它角度分析扫描」。
+
+**设计决策**：
+- **凭证吊销用版本号，不用黑名单**：`users.token_version` 写进 JWT `claims.ver`，中间件比对库值。改密、禁用、删除、主动登出都会自增 → 该用户**已签发未过期**的 token 立即失效；天然多实例一致（无需 Redis/会话表），老 token 无 `ver` 按 0 处理，升级不打断在线会话。
+- 登出语义：本系统无服务端会话表，`POST /auth/logout` 等于「该账号全端下线」（UI 已接入「退出登录」）。
+- 删除用户外键处理：`directories/files/file_versions/shares/published_dirs.created_by` 都是 NO ACTION，直接 DELETE 会被 PG 拒。故在同一事务内：撤销其分享（`revoked=true`）、停用其发布、删其目录/文件授权与文件锁，并把名下内容 `created_by` **转交执行删除的管理员**（保证数据仍可见），再删用户（`team_members`/`user_settings` 由 CASCADE 清理，`audit_logs.actor_id` 置空）。
+- 守卫：不能删/禁用自己；系统至少保留一个「启用状态的管理员」（删最后管理员、降级最后管理员都拦）。
+- UI 要求落地：禁用/启用**一键生效无确认**；删除弹**红色警示 + 必须手动输入用户名**，输入一致才点亮「永久删除」。
+
+**代码改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `crates/vk-store/migrations/00000000000012_token_version.sql`（新） | `users.token_version integer NOT NULL DEFAULT 0` |
+| `crates/vk-core/src/model.rs` | `User.token_version`（`skip_serializing`，不泄露到 API） |
+| `crates/vk-store/src/repo/users.rs` | SELECT 增列；`set_password`/`set_disabled(禁用)` 自增版本；新增 `bump_token_version` / `delete(pool,id,operator)` 事务清理 / `active_admin_count` |
+| `crates/vk-store/src/repo/teams.rs` | 成员查询补 `token_version` 列 |
+| `crates/vk-api/src/auth.rs` | `Claims.ver`；`sign_token` 写入、`parse_token` 返回、中间件比对（不一致 401「登录状态已失效」）；新增 `logout` |
+| `crates/vk-api/src/users.rs` | 新增 `delete`（管理员 + 自删/最后管理员守卫）；`update` 增加最后管理员守卫 |
+| `crates/vk-api/src/lib.rs` | 注册 `POST /auth/logout`、`DELETE /users/{id}` |
+| `web/src/store/useAuth.ts` | 登出先调服务端吊销再清本地 |
+| `web/src/api/schema.ts` | 新增两个端点类型 |
+| `web/src/apps/teams.tsx` | 禁用/启用改一键；新增删除二次确认弹窗（手输用户名） |
+| `web/src/api/index.ts` | **修既有 bug**：o2t 客户端把方法名原样下发，`patch` 小写被浏览器当非标准方法 → 后端 405。此前「编辑用户/编辑团队」保存一直是坏的；拦截器统一 `method.toUpperCase()` |
+| `docs/01-architecture.md` / `02-ui-design.md` | 记录吊销机制、删除语义与 UI 确认规则 |
+
+**验证命令与结果**：
+
+| 验证 | 结果 |
+|---|---|
+| `cargo build && cargo test` | 通过（单测含 janitor 报告逻辑） |
+| `node /tmp/pw-check/m241-token-user.mjs`（30 项，HTTP） | **30/30**：登出后旧 token 401 且重登可用；管理员重置密码后旧 token 401；禁用后请求 403、再登录 403；启用后旧的已吊销 token 仍 401；删除用户 200 → 列表消失、无法登录、名下目录转交管理员且文件仍在；不能删自己 |
+| `node /tmp/pw-check/m241-ui-user.mjs`（17 项，浏览器） | **17/17**：用户 Tab 打开；点「禁用」无弹窗且行状态变「已禁用」；「启用」恢复「正常」；「编辑」改显示名保存生效（验证 PATCH 405 已修）；「删除」弹确认框、未输入/输错时按钮禁用且提示「用户名不一致」、输对后删除生效；零 pageerror、零错误 toast |
+| 回归 | m231 **20/20**、m236 **48/48**、m237 **8/8**、m238 **21/21**、m239 **26/26**、m240 **30/30** |
+| 部署 | 新 pid **895524**，8080/8090 = 200，迁移 12 已应用，前端 bundle 更新（`index-PyLy0hNN.js` / `pages-DXgdrqi1.js`） |
+
+**结论**：M2.41 完成——JWT 具备「改密/禁用/删除/登出即吊销」能力，用户管理补齐禁用（无确认）与删除（手输用户名二次确认）；顺带修掉前端 `patch` 方法小写导致的 405（编辑用户/团队一直不可用）。
+
+### 2026-11-01 (UTC+8) M2.42 第二轮扫描：可靠性 / 数据完整性 / 资源与运维
+
+**任务**：承接上条「3. 再从其它角度分析扫描」，按可靠性、数据完整性、资源耗尽、可观测性、部署五个角度补审并对发现项修复。
+
+**发现与修复**：
+
+| 角度 | 发现 | 处置 |
+|---|---|---|
+| 数据完整性/运维 | 文档承诺的保留策略**全都没实现**（`VIENTO_TRASH_RETENTION_DAYS`/`VIENTO_VERSION_KEEP`/`VIENTO_AUDIT_RETENTION_DAYS` 只是配置项）；`purge` 只删 DB 行，**对象文件永不删除** → 磁盘只增不减（`ObjectStore::remove/list_all` 已是死代码） | 新增 `vk-api/src/janitor.rs` 后台任务（`VIENTO_JANITOR_INTERVAL_MINUTES`，默认 360，0=关）：回收站过期清理、版本裁剪到 keep、审计保留、**孤儿对象 GC**（仅删「无任何版本引用且落盘 >24h」的 blob，防误删刚上传未落库的对象）、清理中断的 `.upload-*` 临时文件；每轮写 `janitor_run` 审计 |
+| 可观测性 | `/api/v1/health` 恒返回 `ok`，不探活依赖 | 改为真实 `SELECT 1`：DB 不可用 → **503**（反代/k8s 可据此摘流） |
+| 网络安全 | 发布站点 308 规范化把请求路径原样拼进 `Location`：`//evil.com` → `Location: //evil.com/`（协议相对**开放重定向**） | `serve_site` 入口把连续前导斜杠折叠为单个；实测 `//sub` → `Location: /sub/` |
+| 可靠性/正确性 | React 客户端 `patch` 用小写方法名 → 后端 405，**编辑用户/编辑团队成员一直保存失败** | 请求拦截器统一转大写（见 M2.41 表） |
+| 边界核对（未改） | SQL 全部参数化（动态拼接仅列名常量）；`From<StoreError>` 已把内部错误转成通用 500 文案不泄露；发布站点路径段拒绝 `.`/`..`；站点 cookie `HttpOnly; SameSite=Lax`；分享/发布/审计/通知的鉴权与过滤顺序无越权 | 记录为通过项 |
+
+**验证**：
+
+| 验证 | 结果 |
+|---|---|
+| janitor 端到端 | 造 1 个文件 → 移入回收站 → DB 把 `deleted_at` 回拨 200 天、对象文件 mtime 回拨 3 天 → 重启（启动即跑一轮）→ 日志 `trashed_files=1 gc_objects=1`，文件行与 blob 均消失 |
+| 首轮实际收益 | 启动日志 `pruned_versions=51 gc_objects=81`（历史 e2e 遗留版本与孤儿对象） |
+| 健康检查 | `GET /api/v1/health` → 200 `ok`（含 DB 探活） |
+| 开放重定向 | `Host: {publish_id}.site.aihualing.com` + `//sub` → `Location: /sub/` |
+| 回归 | 全部 **200 项检查**通过（m231 20 / m236 48 / m237 8 / m238 21 / m239 26 / m240 30 / m241 30 / m241-ui 17） |
+
+**残余风险（未改）**：
+1. 无用户级磁盘配额：已登录用户可一直上传直到磁盘写满（建议加配额或磁盘水位告警）。
+2. janitor 与上传并发窗口靠「24h 未引用才 GC」兜底，不是严格引用计数；极端时钟漂移场景需注意。
+3. 前端 `tsc -b` 仍有 4 个历史类型错误（`ZipView`/`FileInfoPanel`/`ShareModal`/`useEntryActions`），与本次改动无关（`vite build` 正常）。
+4. 限流仍是单实例内存计数；多实例需 Redis。
+5. 无全局请求超时、无 HSTS（需 TLS 反代）。
+
+### 2026-11-01 (UTC+8) M2.43 个人存储配额
+
+**任务**：「需要在用户列表添加配额管理 针对单个用户的，默认不限制」。
+
+**设计**：
+- `users.quota_bytes bigint NULL`（迁移 13），**NULL = 不限制（默认）**，按用户单独设置；配额值域 `0..10 PiB`。
+- 占用口径：该用户名下**未删除（不在回收站）文件的当前版本大小之和**。删除进回收站即释放配额（用户直觉一致）；历史版本与回收站不计入（分别由 `VIENTO_VERSION_KEEP` 与回收站保留期治理）。
+- 准入点（都在写路径最前，未落库即拒）：上传（把单次读入上限夹紧到剩余额度）、保存新版本（按「替换后的总占用」判定）、复制、版本回滚。超限统一 `413 QUOTA_EXCEEDED`，`details` 带 `quota_bytes`/`used_bytes`。
+- 接口：`PUT /api/v1/users/{id}/quota`（管理员）body `{quota_bytes: number|null}`；`GET /users` 与 `/auth/me` 返回 `quota_bytes`/`used_bytes`（前端预检 + 管理员查看）。
+- 明确不做「缩配额删文件」：缩容只影响后续写入。
+- 并发写入为尽力而为（无全局锁），服务端校验是最终裁决。
+
+**代码改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `crates/vk-store/migrations/00000000000013_user_quota.sql`（新） | `users.quota_bytes` + `idx_files_created_by`（部分索引） |
+| `crates/vk-core/src/model.rs` | `User.quota_bytes` |
+| `crates/vk-store/src/repo/users.rs` | SELECT/映射补列；新增 `set_quota` / `usage_bytes` / `usage_by_creator` |
+| `crates/vk-store/src/repo/files.rs` | 新增 `version_size`（回滚时算差额） |
+| `crates/vk-store/src/repo/teams.rs` | 成员查询补 `quota_bytes` |
+| `crates/vk-api/src/error.rs` | 新增 `quota_exceeded`（413 + `QUOTA_EXCEEDED` + details） |
+| `crates/vk-api/src/files.rs` | `remaining_quota` / `quota_error` / `ensure_quota`；上传/保存/复制/回滚接入 |
+| `crates/vk-api/src/users.rs` | `UserOut` 增 `quota_bytes`/`used_bytes`；新增 `set_quota` 端点（审计 `user_quota`） |
+| `crates/vk-api/src/auth.rs` | `/auth/me` 返回配额与占用 |
+| `crates/vk-api/src/lib.rs` | 注册 `PUT /users/{id}/quota` |
+| `web/src/api/schema.ts` | `User`/`AuthUser` 补配额字段、`SetQuotaReq`、端点类型 |
+| `web/src/apps/teams.tsx` | 用户表新增「配额」列（已用 / 上限，超限红色）+「配额」按钮 + 设置弹窗（MB，留空不限） |
+| `web/src/lib/upload.ts` | 上传前按 `/auth/me` 快照预检，超限直接提示剩余额度；中断提示改为「可能超出配额或大小上限」 |
+
+**验证**：
+
+| 验证 | 结果 |
+|---|---|
+| `cargo build && cargo test` | 通过 |
+| `node /tmp/pw-check/m243-quota.mjs`（27 项） | **27/27**：默认 `null` 不限；设 1MB 生效；超限上传 413 + `QUOTA_EXCEEDED` + details；配额内 200；加传被拒；保存新版本按替换后总占用判定（1.2MB 拒 / 900KB 过，占用变 900KB）；复制超限 413；删除进回收站后 `used_bytes=0` 且可继续上传；取消配额后 2MB 可传；非管理员设置 403；配额 0 任何上传被拒；UI 配额列显示、设 2MB 显示「2.0 MB」、清空显示「不限」、零 pageerror |
+| 回归 | m231 20 / m236 48 / m237 8 / m238 21 / m239 26 / m240 30 / m241 30 / m241-ui 17 **全过** |
+| 部署 | pid **970506**，8080/8090 = 200，迁移 13 已应用 |
+
+**残余风险**：并发上传之间无锁（可短暂超额）；占用不含历史版本与回收站，恶意刷版本可放大磁盘（受 `VIENTO_VERSION_KEEP` 与 janitor 裁剪约束）；配额只覆盖文件写入，不包括团队/分享复用他人对象（内容寻址天然去重，不额外计费）。
+
+### 2026-11-01 (UTC+8) M2.43b 用户操作列收敛为「编辑 + ⋯ 菜单」
+
+**任务**：「操作列里的操作按钮太多 把编辑放在外面 其它都通过... dropdown来显示」。
+
+**改动**：
+- `web/src/apps/teams.tsx`：操作列只保留常显「编辑」；「重置密码（仅本地账号）/ 存储配额 / 禁用账号·启用账号 / 删除用户」收进行尾 `⋯`（`Dropdown` + 分隔线，删除为 danger 且对自己禁用），列宽 370 → 130。
+- `web/src/components/ui/kit.tsx`（共用组件修复）：`Dropdown` 菜单改为 `createPortal` 到 `body` —— 桌面窗口有 `backdrop-filter`，会成为 `position: fixed` 子元素的包含块，原先在用户表格里菜单会被窗口右边界裁切（实测截图：菜单文字被切断）。顺带：点击外部判定同时排除菜单节点本身；菜单高度不足时向上翻转，避免贴近视口底部被截断。
+- `docs/02-ui-design.md`：补充操作列规则。
+
+**验证**：
+- `m241-ui-user.mjs` **18/18**（新增 U1 断言：行内只有「编辑」+ `⋯`，无散落按钮；禁用/启用/删除均经验证走菜单）
+- `m243-quota.mjs` **27/27**（配额入口改走「存储配额」菜单项）
+- 回归：m231 20 / m236 48 / m237 8 / m238 21 / m239 26 / m240 30 / m241 30 全过
+- 兼容性抽查：顶栏用户下拉可开、点外部可关；`⋯` 菜单完整显示于窗口内（截图 `/tmp/pw-check/menu-open.png`）
+- 部署：pid **977543**，8080/8090 = 200
+
+**说明**：`Dropdown` 是共用组件（顶栏、文件表格均用），portal 化对外层行为无影响；仅修正了包含块/裁切问题。

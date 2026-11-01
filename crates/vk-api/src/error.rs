@@ -79,6 +79,16 @@ impl ApiError {
         e
     }
 
+    /// 个人存储配额不足（M2.43）：413 + `QUOTA_EXCEEDED`，details 带配额与已用字节。
+    pub fn quota_exceeded(quota_bytes: i64, used_bytes: i64) -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "QUOTA_EXCEEDED",
+            "已超出个人存储配额，请清理文件或联系管理员调整",
+        )
+        .with_details(json!({ "quota_bytes": quota_bytes, "used_bytes": used_bytes }))
+    }
+
     pub fn upload_too_large() -> Self {
         Self::new(
             StatusCode::PAYLOAD_TOO_LARGE,

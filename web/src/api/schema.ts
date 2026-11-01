@@ -22,6 +22,10 @@ export type User = {
   role: Role
   disabled: boolean
   created_at: string
+  /** 个人存储配额（字节）；null = 不限制（M2.43）。 */
+  quota_bytes: number | null
+  /** 当前占用字节（未删除文件当前版本大小之和）。 */
+  used_bytes: number
 }
 
 /** /api/v1/auth/me 与 JWT 中间件注入的当前用户。 */
@@ -31,6 +35,9 @@ export type AuthUser = {
   display_name: string
   role: Role
   is_admin: boolean
+  /** 个人配额（字节，null = 不限制）与当前占用（M2.43，仅 /auth/me 返回）。 */
+  quota_bytes?: number | null
+  used_bytes?: number
 }
 
 export type Team = {
@@ -435,6 +442,11 @@ export type OkResp = {
   ok: boolean
 }
 
+/** PUT /users/{id}/quota：`quota_bytes=null` 表示不限制。 */
+export type SetQuotaReq = {
+  quota_bytes: number | null
+}
+
 // ---------------- 请求体 ----------------
 
 export type BootstrapReq = {
@@ -587,6 +599,8 @@ export type OpenAPIs = {
   post: {
     '/api/v1/auth/bootstrap': { query: any; params: any; body: BootstrapReq; headers: any; response: LoginResp }
     '/api/v1/auth/login': { query: any; params: any; body: LoginReq; headers: any; response: LoginResp }
+    // M2.41：登出会使该用户所有已签发 token 立即失效（token_version 自增）
+    '/api/v1/auth/logout': { query: any; params: any; body: any; headers: any; response: OkResp }
     '/api/v1/users': { query: any; params: any; body: CreateUserReq; headers: any; response: User }
     '/api/v1/users/{id}/password': { query: any; params: IdParams; body: SetPasswordReq; headers: any; response: OkResp }
     // LDAP 导入无请求体（配置全部来自服务端环境变量）
@@ -619,6 +633,7 @@ export type OpenAPIs = {
     '/api/v1/settings/desktop': { query: any; params: any; body: Partial<DesktopSettings>; headers: any; response: DesktopSettings }
     '/api/v1/settings/system/share': { query: any; params: any; body: Partial<ShareSystemSettings>; headers: any; response: ShareSystemSettings }
     '/api/v1/users/ldap/config': { query: any; params: any; body: LdapConfigUpdate; headers: any; response: LdapConfigInfo }
+    '/api/v1/users/{id}/quota': { query: any; params: IdParams; body: SetQuotaReq; headers: any; response: User }
   }
   patch: {
     '/api/v1/users/{id}': { query: any; params: IdParams; body: UpdateUserReq; headers: any; response: User }
@@ -634,5 +649,7 @@ export type OpenAPIs = {
     '/api/v1/files/{id}/purge': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/directories/{id}/publish': { query: any; params: IdParams; body: any; headers: any; response: OkResp }
     '/api/v1/users/ldap/config': { query: any; params: any; body: any; headers: any; response: { ok: boolean; deleted: boolean } }
+    // M2.41：删除用户（管理员）；名下内容转交执行删除的管理员，分享撤销、发布停用
+    '/api/v1/users/{id}': { query: any; params: IdParams; body: any; headers: any; response: { ok: boolean; username: string } }
   }
 }
