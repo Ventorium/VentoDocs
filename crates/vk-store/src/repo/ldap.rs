@@ -187,6 +187,62 @@ pub async fn search_users(cfg: &LdapConfig) -> Result<Vec<LdapEntry>, String> {
     Ok(out)
 }
 
+/// 校验用户口令是否可由 LDAP 接受（M2.44 WebDAV Basic 认证）。
+///
+/// 优先使用导入时保存的 `ldap_dn` 直接 bind（不暴露服务账号口令）；
+/// 缺失时先用服务账号（或匿名）按用户名检索 DN，再以用户 DN bind。
+/// 返回 `Ok(false)` 表示凭据错误；连接/配置错误返回 `Err`。
+pub async fn verify_credentials(
+    cfg: &LdapConfig,
+    username: &str,
+    dn: Option<&str>,
+    password: &str,
+) -> Result<bool, String> {
+    if password.is_empty() {
+        return Ok(false);
+    }
+    let url = cfg.url();
+    let settings = LdapConnSettings::new().set_starttls(cfg.start_tls);
+    let (conn, mut ldap) = LdapConnAsync::with_settings(settings, &url)
+        .await
+        .map_err(|e| format!("连接 LDAP {url} 失败: {e}"))?;
+    ldap3::drive!(conn);
+
+    let user_dn = match dn.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(d) => d.to_string(),
+        None => {
+            if !cfg.bind_dn.is_empty() {
+                ldap.simple_bind(&cfg.bind_dn, &cfg.bind_password)
+                    .await
+                    .map_err(|e| format!("LDAP 服务账号绑定失败: {e}"))?
+                    .success()
+                    .map_err(|e| format!("LDAP 服务账号绑定失败: {e}"))?;
+            }
+            let escaped = ldap3::ldap_escape(username);
+            let filter = format!("(&{}({}={}))", cfg.user_filter, cfg.attr_username, escaped);
+            let attrs: [&str; 0] = [];
+            let (entries, _res) = ldap
+                .search(&cfg.base_dn, Scope::Subtree, &filter, &attrs)
+                .await
+                .map_err(|e| format!("LDAP 搜索失败: {e}"))?
+                .success()
+                .map_err(|e| format!("LDAP 搜索失败: {e}"))?;
+            let Some(entry) = entries.into_iter().next() else {
+                return Ok(false);
+            };
+            SearchEntry::construct(entry).dn
+        }
+    };
+
+    let res = ldap
+        .simple_bind(&user_dn, password)
+        .await
+        .map_err(|e| format!("LDAP 用户绑定失败: {e}"))?;
+    let ok = res.rc == 0;
+    let _ = ldap.unbind().await;
+    Ok(ok)
+}
+
 /// 搜索 LDAP 并将条目单向同步到本地 users。
 pub async fn import_to_db(db: &Db, cfg: &LdapConfig) -> Result<LdapImportResult, String> {
     let pool = db.pool();

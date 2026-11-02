@@ -7,6 +7,7 @@ import { WALLPAPERS } from '@/lib/wallpapers'
 import { useAuth } from '@/store/useAuth'
 import { useSettings, type ThemeMode } from '@/store/useSettings'
 import { Btn, Input, Seg, Spin, Switch, Tag } from '@/components/ui/kit'
+import { WebdavHelpContent } from '@/components/WebdavHelp'
 import { msg } from '@/components/ui/toast'
 
 type LdapConfigInfo = {
@@ -667,12 +668,21 @@ const AboutSection = () => (
   </Panel>
 )
 
+/** 客户端挂载（WebDAV）：所有登录用户可见，内容与文件管理器里的帮助弹窗同源。 */
+const WebdavSection = () => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <Panel title="WebDAV 客户端挂载">
+      <WebdavHelpContent />
+    </Panel>
+  </div>
+)
+
 const SettingsPage = () => {
   const role = useAuth((s) => s.computed.role)
   const isAdmin = role === 'admin'
-  const [section, setSection] = useState<'appearance' | 'share' | 'security' | 'about'>('appearance')
+  const [section, setSection] = useState<'appearance' | 'share' | 'security' | 'webdav' | 'about'>('appearance')
 
-  const items: { key: 'appearance' | 'share' | 'security' | 'about'; label: string }[] = [
+  const items: { key: 'appearance' | 'share' | 'security' | 'webdav' | 'about'; label: string }[] = [
     { key: 'appearance', label: '外观设置' },
     ...(isAdmin
       ? [
@@ -680,6 +690,7 @@ const SettingsPage = () => {
           { key: 'security' as const, label: '账户与安全' },
         ]
       : []),
+    { key: 'webdav', label: '客户端挂载' },
     { key: 'about', label: '关于' },
   ]
 
@@ -710,6 +721,7 @@ const SettingsPage = () => {
         {section === 'appearance' ? <AppearanceSection /> : null}
         {section === 'share' && isAdmin ? <ShareSection /> : null}
         {section === 'security' && isAdmin ? <LdapSection /> : null}
+        {section === 'webdav' ? <WebdavSection /> : null}
         {section === 'about' ? <AboutSection /> : null}
       </div>
     </div>

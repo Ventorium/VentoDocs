@@ -185,3 +185,15 @@ docker compose -f compose.prod.yml up -d
 | 端口被占用 | 改 `VIENTO_BIND_ADDR`；确认 8080 未被其他进程监听 |
 | 发布站点 410 | 发布被停用或 token 失效，属预期行为 |
 | bootstrap 403 | 系统已初始化，端点已关闭；走用户管理页改密 |
+
+## 11. WebDAV 客户端挂载（M2.44）
+
+任何登录用户可把网盘挂到本机文件管理器，入口为同源 **`/dav`**（Basic 认证，用户名/邮箱 + 登录密码；LDAP 用户用目录密码，需先配置并测试 LDAP 连接）。
+
+- **根目录固定三段**：`个人`（自己的文件）、`团队`（共享给所在团队的目录）、`分享给我`（别人直接共享的目录）。另有 ASCII 别名 `/dav/personal`、`/dav/team`、`/dav/shared`，便于脚本调用。
+- **权限/配额**：与网页端完全同一套（`READ_PREVIEW` / `DOWNLOAD` / `CREATE_UPLOAD` / `MODIFY_RENAME` / `MOVE_COPY` / `DELETE_RESTORE`）；WebDAV 覆盖保存也会生成新版本；删除进回收站；超额返回 `507`。
+- **Windows**：资源管理器“映射网络驱动器”，或 `net use Z: https://<域名>/dav`；推荐 HTTPS 反代（Windows 对纯 HTTP Basic 有限制，需改注册表，生产不建议）。
+- **macOS**：Finder → 前往 → 连接服务器（⌘K）→ `https://<域名>/dav` → 注册用户。
+- **Linux**：GNOME 文件管理器“连接服务器”（`dav://host/dav`）或 `mount -t davfs`。
+- **反向代理**：需透传 `PROPFIND/PROPPATCH/MKCOL/COPY/MOVE/LOCK/UNLOCK` 方法与 `Depth/Destination/Overwrite/If/Lock-Token/Timeout/Range` 头，并放宽请求体上限（与上传上限一致）；`/dav` 不要缓存。
+- **冒烟**：`VENTO_ADMIN_PASS=... VENTO_USER_PASS=... make webdav-smoke`（覆盖读写、COPY/MOVE、锁、只读越权、团队、配额）。

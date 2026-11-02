@@ -1,9 +1,10 @@
 //! 敏感端点限流（进程内固定窗口计数器，防口令暴力破解）。
 //!
-//! 适用：登录 / 首次初始化 / 分享密码校验 / 发布站点密码校验 / 站点密码门。
-//! 策略：**只统计失败**（401/403/400）——正常用户即使输错一两次也不会被锁；
-//! 同一 IP 在同一端点 5 分钟内失败超过 [`MAX_FAILURES`] 次则返回 429 + `Retry-After`，
-//! 成功一次即清零（避免把「偶尔手滑」累积成封锁）。
+//! 适用：登录 / 首次初始化 / 分享密码校验 / 发布站点密码校验 / 站点密码门 / WebDAV Basic。
+//! 策略：**只统计失败**（登录类 401/403/400；WebDAV 仅 401，权限 403 属正常）——
+//! 正常用户即使输错一两次也不会被锁；同一 IP 在同一端点 5 分钟内失败超过
+//! [`MAX_FAILURES`] 次则返回 429 + `Retry-After`，成功一次即清零（避免把「偶尔手滑」
+//! 累积成封锁；WebDAV 只有带凭据的成功请求才清零，防止用免认证 OPTIONS 绕过）。
 //!
 //! 说明：多实例部署时该限制为单进程粒度（本项目单进程部署，够用）；
 //! 若日后水平扩展，应换成 Redis（`.env.example` 已有 `VIENTO_REDIS_URL` 预留）。
@@ -106,6 +107,24 @@ fn rate_limited(retry_after: u64) -> Response {
         body,
     )
         .into_response()
+}
+
+/// WebDAV Basic 认证守卫：只把 **401（认证失败）** 计入失败，避免只读共享目录
+/// 正常的 403 权限拒绝把整个 IP 锁死；认证成功即清零。
+pub async fn dav_guard(req: Request, next: Next) -> Response {
+    let key = client_key("webdav");
+    if let Some(retry) = blocked(&key) {
+        return rate_limited(retry);
+    }
+    // 只有携带凭据的成功请求才清零；否则攻击者可用免认证 OPTIONS 重置计数。
+    let has_auth = req.headers().contains_key(header::AUTHORIZATION);
+    let resp = next.run(req).await;
+    if resp.status() == StatusCode::UNAUTHORIZED {
+        note_failure(&key);
+    } else if resp.status().is_success() && has_auth {
+        note_success(&key);
+    }
+    resp
 }
 
 /// 通用守卫：失败计数 + 429 拦截 + 成功清零。

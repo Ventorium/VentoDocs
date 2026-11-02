@@ -512,3 +512,13 @@ Rust 侧 `TextExtractor`：txt/md/csv 直接；xlsx → calamine（表格转文�
 | v2 | 全文/向量检索（zvec-grep，POC-2）、文档页 Agent、全应用 RAG Agent | POC-2 + M1 |
 
 POC 明细与验收标准见 `docs/04-poc-milestones.md`。
+
+## 21. WebDAV 挂载（M2.44）
+
+- **目标**：替换 Nextcloud 的第一阶段——用户把网盘挂到 Windows/macOS/Linux 文件管理器；不引入独立 WebDAV 服务，复用同一套用户、目录树、授权、配额、版本与回收站。
+- **入口与认证**：`/dav`（与 SPA 同源），HTTP Basic；用户名/邮箱 + 密码，本地账号走 Argon2，LDAP 账号走 LDAP bind（优先用导入时保存的 `ldap_dn`，缺失时服务账号检索 DN）。凭据校验结果在进程内按 `SHA-256(user:pass)` 缓存 5 分钟，避免每个请求跑一次 Argon2/LDAP bind。
+- **虚拟根**：`/dav/个人`、`/dav/团队`、`/dav/分享给我`（ASCII 别名 personal/team/shared）。个人=根目录下 `created_by=me` 的顶层条目；团队/分享给我=`Grants::list_shared`（直接 user 授权 / 所在 team 授权），同名共享目录自动加 `(2)` 后缀保证路径唯一。
+- **协议子集**：OPTIONS、PROPFIND（Depth 0/1）、PROPPATCH（no-op 207）、GET/HEAD（含单段 Range）、PUT（新建 201 / 覆盖 204，覆盖生成新版本）、MKCOL、DELETE（软删除进回收站）、MOVE/COPY（文件与目录递归）、LOCK/UNLOCK（进程内内存锁 + lock-null 兼容 Windows 新建流程）。
+- **权限映射**：读取需 READ_PREVIEW（GET 需 DOWNLOAD），新建/上传需 CREATE_UPLOAD，覆盖/改名需 MODIFY_RENAME，移动/复制需 MOVE_COPY，删除需 DELETE_RESTORE；管理员 `ALL` 旁路与 REST 一致。
+- **限制**：Depth: infinity 返回 403；应用密码/2FA 未覆盖（Basic 使用登录密码）；锁为单进程内存锁，多实例部署需外置；`PROPFIND` 不返回 quota-used/available 属性。
+- **验证**：`scripts/webdav-smoke.mjs`（31 项）+ 前端弹窗/设置页冒烟；Node 脚本不依赖数据库，使用 REST 查目录 id 与团队。

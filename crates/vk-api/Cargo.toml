@@ -24,3 +24,6 @@ futures-util = { workspace = true }
 sqlx = { workspace = true }
 bytes = { workspace = true }
 zip = { workspace = true }
+base64 = "0.22"
+percent-encoding = "2"
+sha2 = "0.10"

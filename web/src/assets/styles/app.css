@@ -1727,6 +1727,19 @@ select.vd-input option {
   min-height: 0;
   overflow: auto;
 }
+/* 点击选中行时容器（tabIndex=-1）会获得焦点，部分浏览器会画焦点框；
+   它是纯键盘操作容器，不需要焦点外框（M2.44） */
+.vd-table-wrap:focus,
+.vd-table-wrap:focus-visible {
+  outline: none;
+}
+/* 行被选中时只做背景高亮，不画任何边框 */
+.vd-table tbody tr.sel,
+.vd-table tbody tr:focus,
+.vd-table tbody tr:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
 .vd-table {
   width: 100%;
   border-collapse: collapse;
@@ -3193,6 +3206,69 @@ select.vd-input option {
   color: var(--vd-text-faint, rgba(160, 160, 168, 0.8));
   padding: 4px 8px;
   line-height: 1.5;
+}
+
+/* M2.44b 左栏「挂载到本地」大号提示按钮 */
+.vd-fm-webdav-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 8px 8px 7px;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.13), rgba(59, 130, 246, 0.06));
+  color: var(--vd-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.vd-fm-webdav-tip:hover {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
+  border-color: rgba(59, 130, 246, 0.42);
+  transform: translateY(-1px);
+}
+.vd-fm-webdav-tip:active {
+  transform: translateY(0);
+}
+.vd-fm-webdav-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: var(--vd-accent);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.28);
+}
+.vd-fm-webdav-tip-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+.vd-fm-webdav-tip-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.vd-fm-webdav-tip-sub {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--vd-text-tertiary);
+  white-space: nowrap;
+}
+.vd-fm-webdav-tip-arrow {
+  flex-shrink: 0;
+  color: var(--vd-accent);
+  opacity: 0.7;
+}
+.vd-fm-webdav-hint {
+  padding-top: 0;
 }
 .vd-fm-sidebar-empty {
   font-size: 11.5px;

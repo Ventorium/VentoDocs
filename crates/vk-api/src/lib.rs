@@ -18,6 +18,7 @@ pub mod shares;
 pub mod site;
 pub mod teams;
 pub mod users;
+pub mod webdav;
 
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::middleware;
 use axum::response::Response;
-use axum::routing::{delete, get, post};
+use axum::routing::{any, delete, get, post};
 use std::net::SocketAddr;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -334,7 +335,14 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(DefaultBodyLimit::max(max_body as usize));
 
-    let merged = public.merge(sensitive).merge(protected);
+    // M2.44：WebDAV 挂载入口（独立于 JWT 中间件；Basic 认证在 handler 内完成）
+    let webdav = Router::new()
+        .route("/dav", any(webdav::handle))
+        .route("/dav/", any(webdav::handle))
+        .route("/dav/{*path}", any(webdav::handle))
+        .layer(middleware::from_fn(rate_limit::dav_guard));
+
+    let merged = public.merge(sensitive).merge(protected).merge(webdav);
 
     // CORS：默认**不放开**跨域（SPA 与 API 同源）；需要跨域的前端用
     // VIENTO_CORS_ORIGINS（逗号分隔）显式列出来源，避免 `permissive()` 让任意站点
@@ -359,12 +367,26 @@ pub fn router(state: AppState) -> Router {
                     Method::PATCH,
                     Method::DELETE,
                     Method::OPTIONS,
+                    Method::from_bytes(b"PROPFIND").unwrap(),
+                    Method::from_bytes(b"PROPPATCH").unwrap(),
+                    Method::from_bytes(b"MKCOL").unwrap(),
+                    Method::from_bytes(b"COPY").unwrap(),
+                    Method::from_bytes(b"MOVE").unwrap(),
+                    Method::from_bytes(b"LOCK").unwrap(),
+                    Method::from_bytes(b"UNLOCK").unwrap(),
                 ])
                 .allow_headers([
                     header::AUTHORIZATION,
                     header::CONTENT_TYPE,
                     header::ACCEPT,
+                    header::RANGE,
                     HeaderName::from_static("x-share-password"),
+                    HeaderName::from_static("depth"),
+                    HeaderName::from_static("destination"),
+                    HeaderName::from_static("overwrite"),
+                    HeaderName::from_static("if"),
+                    HeaderName::from_static("lock-token"),
+                    HeaderName::from_static("timeout"),
                 ])
                 .max_age(std::time::Duration::from_secs(3600)),
         )

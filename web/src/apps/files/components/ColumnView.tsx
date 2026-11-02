@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, CloudUpload, Folder, FolderPlus, Lock, RefreshCw, Search, Share2, SquarePlus, Users } from 'lucide-react'
+import { ChevronRight, CloudUpload, Folder, FolderPlus, Lock, Plug, RefreshCw, Search, Share2, SquarePlus, Users } from 'lucide-react'
 import { client } from '@/api'
 import type { Entry, SharedDirOut } from '@/api/schema'
 import { msg } from '@/components/ui/toast'
 import { Btn, Input, Modal, Spin, type DropItem } from '@/components/ui/kit'
 import FileIcon, { FolderIcon } from '@/components/FileIcon'
 import VersionsDrawer from '@/components/VersionsDrawer'
+import { WebdavHelpModal } from '@/components/WebdavHelp'
 import { useContextMenu, type CtxItem } from '@/shell/ContextMenu'
 import { useWindows } from '@/kernel/window/store'
 import { uploadFile } from '@/lib/upload'
@@ -201,6 +202,8 @@ const ColumnView = ({ dirId, initialScope = null, onNavigateDir, onOpenFile, onT
   const [dragOverCol, setDragOverCol] = useState<string | null>(null)
   const [band, setBand] = useState<{ col: number; top: number; height: number } | null>(null)
   const [q, setQ] = useState('')
+  // M2.44：WebDAV 挂载帮助（顶栏按钮 / 左栏提示共用）
+  const [webdavOpen, setWebdavOpen] = useState(false)
 
   // ── M2.18 左栏：个人 / 团队共享 / 分享给我 ─────────────────────
   // M2.19：初始作用域从 appState 恢复（刷新后回到团队共享/分享给我）
@@ -1201,6 +1204,15 @@ const ColumnView = ({ dirId, initialScope = null, onNavigateDir, onOpenFile, onT
         <button
           type="button"
           className="vd-fm-path-refresh"
+          onClick={() => setWebdavOpen(true)}
+          title="挂载到本地（WebDAV）"
+          aria-label="挂载到本地（WebDAV）"
+        >
+          <Plug size={14} />
+        </button>
+        <button
+          type="button"
+          className="vd-fm-path-refresh"
           onClick={() => useWindows.getState().open('explorer')}
           title="新建文件管理器窗口"
         >
@@ -1243,6 +1255,25 @@ const ColumnView = ({ dirId, initialScope = null, onNavigateDir, onOpenFile, onT
                   <span>分享给我</span>
                   {shared.me.length > 0 && <em className="vd-fm-badge">{shared.me.length}</em>}
                 </button>
+              </div>
+              <button
+                type="button"
+                className="vd-fm-webdav-tip"
+                onClick={() => setWebdavOpen(true)}
+                title="查看 WebDAV 挂载说明（Windows / macOS / Linux）"
+                aria-label="查看 WebDAV 挂载说明"
+              >
+                <span className="vd-fm-webdav-tip-icon">
+                  <Plug size={16} />
+                </span>
+                <span className="vd-fm-webdav-tip-body">
+                  <span className="vd-fm-webdav-tip-title">挂载到本地</span>
+                  <span className="vd-fm-webdav-tip-sub">WebDAV 使用说明</span>
+                </span>
+                <ChevronRight size={13} className="vd-fm-webdav-tip-arrow" />
+              </button>
+              <div className="vd-fm-sidebar-hint vd-fm-webdav-hint">
+                WebDAV 根目录同样区分为 个人 / 团队 / 分享给我
               </div>
               <div className="vd-fm-sidebar-hint">
                 {scope === 'personal'
@@ -1557,6 +1588,7 @@ const ColumnView = ({ dirId, initialScope = null, onNavigateDir, onOpenFile, onT
       )}
 
       <NewDirModal open={newDirOpen} submitting={creating} onSubmit={createDir} />
+      <WebdavHelpModal open={webdavOpen} onClose={() => setWebdavOpen(false)} />
     </div>
   )
 }

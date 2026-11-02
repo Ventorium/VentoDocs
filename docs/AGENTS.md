@@ -1609,3 +1609,69 @@ node /tmp/pw-check/m231-trash-name.mjs   # 20 项，自包含自建测试目录�
 - 部署：pid **977543**，8080/8090 = 200
 
 **说明**：`Dropdown` 是共用组件（顶栏、文件表格均用），portal 化对外层行为无影响；仅修正了包含块/裁切问题。
+
+### 2026-11-02 (UTC+8) M2.44 WebDAV 挂载（个人 / 团队 / 分享给我）
+
+**任务**：「先做 webdav 功能 可以让用户挂载到本地 页面上也要有提示怎么使用 还有目录上要区分 个人/团队/分享给我 这几个顶级目录」。
+
+**设计**：
+- **同源 `/dav`**，不引入独立 WebDAV 服务：直接复用目录树、`Grants`、配额、版本、回收站与审计；根目录固定 `个人`、`团队`、`分享给我`（ASCII 别名 `personal`/`team`/`shared`）。
+- **Basic 认证**：用户名/邮箱 + 登录密码；本地账号 Argon2 校验，LDAP 账号走 LDAP bind（优先用 `users.ldap_dn`，缺失时用服务账号检索 DN）。校验结果按 `SHA-256(user:pass)` 在进程内缓存 5 分钟，避免每个请求跑一次 Argon2/bind；账号禁用仍逐请求检查。
+- **协议子集**：OPTIONS、PROPFIND（Depth 0/1；infinity 返回 403）、PROPPATCH（no-op 207）、GET/HEAD（单段 Range 206）、PUT（新建 201 / 覆盖 204 且生成新版本）、MKCOL、DELETE（软删除）、MOVE/COPY（目录递归，防移入自身）、LOCK/UNLOCK（内存锁 + lock-null 兼容 Windows 新建流程）。
+- **权限映射**：PROPFIND/GET 需 READ_PREVIEW（GET 另需 DOWNLOAD），PUT 新建/MKCOL 需 CREATE_UPLOAD，覆盖/改名需 MODIFY_RENAME，MOVE/COPY 需 MOVE_COPY，DELETE 需 DELETE_RESTORE；管理员 `ALL` 旁路与 REST 一致。
+- **配额**：PUT 流式写入把上限夹紧到剩余额度，超限 `507`（普通写入仍 `413` 语义）。
+- **前端**：文件管理器顶栏插头按钮 + 左栏提示；`WebdavHelpModal`（地址复制、用户名、Windows/macOS/Linux 步骤、三类顶级目录、HTTPS 提示）；系统设置新增「客户端挂载」section（所有用户可见）。
+
+**代码改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `crates/vk-api/src/webdav.rs`（新） | 完整 WebDAV handler：虚拟根、路径解析、PROPFIND/GET/PUT/MKCOL/DELETE/MOVE/COPY/LOCK、配额、Basic 认证与凭据缓存 |
+| `crates/vk-api/src/lib.rs` | 注册 `/dav`、`/dav/`、`/dav/{*path}`（独立于 JWT 中间件，挂 `dav_guard`）；CORS 补 WebDAV 方法与头 |
+| `crates/vk-api/src/rate_limit.rs` | `dav_guard`（WebDAV 失败计数独立于登录端点） |
+| `crates/vk-store/src/repo/ldap.rs` | `verify_credentials`：按 `ldap_dn` 直接 bind，缺失时服务账号搜索 DN 后 bind |
+| `crates/vk-api/Cargo.toml` / `Cargo.lock` | 新增 `base64`、`percent-encoding`、`sha2` |
+| `web/src/components/WebdavHelp.tsx`（新） | 帮助内容/弹窗、地址复制、三平台步骤 |
+| `web/src/apps/files/components/ColumnView.tsx` | 顶栏 Plug 按钮 + **左栏大号「挂载到本地」CTA** + WebDAV 根目录提示 + 弹窗挂载 |
+| `web/src/apps/settings.tsx` | 新增「客户端挂载」section |
+| `scripts/webdav-smoke.mjs`（新） | 31 项可复现冒烟（REST 查 id，不依赖数据库）；`Makefile` 增 `webdav-smoke` |
+| `docs/01-architecture.md` / `docs/05-deployment.md` | WebDAV 架构与部署/反代说明 |
+
+**验证命令与结果**：
+
+| 验证 | 命令/方式 | 结果 |
+|---|---|---|
+| 编译/单测 | `cargo build --workspace`；`cargo test --workspace` | 通过（6 项单测：janitor 1 + rate_limit 1 + ids 3 + password 1）；`cargo clippy -p vk-api -p vk-store` 0 警告 |
+| 协议冒烟（全量，含 DB 断言） | `node /tmp/m244_dav.mjs`（8080） | **53/53**：OPTIONS/401/三根目录、个人读写/覆盖/ETag/Range、COPY/MOVE 文件+目录、LOCK/UNLOCK、lock-null、只读分享越权 403、团队可见可读、配额 507、清理 |
+| 协议冒烟（入库脚本） | `VENTO_ADMIN_PASS=... VENTO_USER_PASS=... make webdav-smoke` | **31/31**：同上核心路径（REST 查目录 id / 用户 id / 团队） |
+| 前端类型/构建 | `pnpm -C web build`；`npx tsc --noEmit -p tsconfig.app.json` | 构建通过；仅 4 个历史文件 7 个错误（无新增） |
+| 既有回归 | m236 48 / m239 26 / m241-ui 18 | **92/92** 全过（文件管理器、回收站、用户/设置） |
+| UI 冒烟（Playwright，8080） | 左栏大号 CTA / 顶栏 Plug → 弹窗 → 复制 toast；设置页「客户端挂载」 | CTA 159×49、按钮可见、标题/地址正确、复制 toast「WebDAV 地址已复制」、设置面板渲染、**0 pageerror** |
+| 手工兼容 | `curl -X PROPFIND -Depth 1` + Python `ElementTree` 解析 | 207、XML 合法、三个顶层目录 href 正确 |
+| 锁可见性 | LOCK 后 `PROPFIND Depth:0` | `lockdiscovery` 含 `activelock`/`locktoken`（Office/Finder 重查锁所需） |
+| 限流语义 | 连续 10 次错误密码 + 免认证 OPTIONS 穿插 | 10 次 401 后第 11 次 429；OPTIONS **不能**重置计数；权限 403 不计入 |
+| 部署 | `pnpm -C web build` → `cargo build` → SIGTERM 旧进程 → 重启 | pid **1587307**，8080 `/api/v1/health` = 200，`/dav` OPTIONS = 200 |
+
+**残余风险 / 未做**：
+1. **LDAP Basic 绑定路径无真实 LDAP 环境实测**（代码已接 `ldap_config`，本地账号路径已覆盖）；LDAP 网页登录仍是历史阻塞项。
+2. Basic 使用登录密码，**未引入应用密码/2FA 专用口令**；公网必须 HTTPS 反代，否则凭据明文。
+3. 凭据缓存 5 分钟：改密/禁用后旧凭据最多再工作 5 分钟（禁用/删除因逐请求查库会立即 401）。
+4. LOCK 为**单进程内存锁**，多实例部署需替换；锁定/刷新超时最长 7 天。
+5. Depth: infinity 返回 403；不返回 `quota-used/available` 属性；`PROPFIND` 元数据沿用与 REST 列表相同的可见性（无正文泄漏）。
+6. 文件级（file_grants）直接分享的文件暂未列入「分享给我」虚拟根（目录分享已覆盖）。
+
+### 2026-11-02 (UTC+8) M2.44b WebDAV 左栏大号提示按钮
+
+**任务**：「现在加的挂载说明的图标太小了 在页面左侧也加个较大的tip按钮提示吧 保持美观」。
+
+**改动**：
+- `web/src/apps/files/components/ColumnView.tsx`：左栏 scope 下方新增整行 CTA「挂载到本地 / WebDAV 使用说明」——27px 实心蓝底插头图标 + 双行文字 + 右箭头；点击打开同一个 `WebdavHelpModal`。顶栏插头图标由 12px 提到 14px 保留为快捷入口。
+- `web/src/assets/styles/app.css`：新增 `.vd-fm-webdav-tip*`，蓝调渐变底、细边框、hover 上浮；`WebDAV 根目录同样区分为…` 小字下移并收紧间距。
+
+**验证**：
+
+| 验证 | 结果 |
+|---|---|
+| `pnpm -C web build` + `tsc -p tsconfig.app.json` | 通过；仅 4 个历史文件 7 个错误，无新增 |
+| UI 冒烟（8080，Playwright） | 左栏 CTA 可见 **159×49px**，文案「挂载到本地 / WebDAV 使用说明」，点击打开弹窗；顶栏插头仍可打开；复制 toast 正常；**0 pageerror** |
+| 部署 | 重建 Rust 嵌体并重启，pid **1587307**，8080/8090 = 200 |
